@@ -15,8 +15,7 @@
 
 #define DUMB_PERIOD 50
 
-int tcpsock;
-
+uv_loop_t *loop;
 
 struct per_vhost_data__rn1 {
 	uv_timer_t timeout_watcher;
@@ -31,14 +30,14 @@ struct per_session_data__rn1 {
 
 uint8_t buf[2048];
 
+static void tcphandler_established(uv_connect_t *conn, int status)
+{
+	lwsl_notice("Connection to the robot established!\n");
+}
+
+
 static void uv_timeout_cb_rn1(uv_timer_t *w)
 {
-	int ret = read(tcpsock, buf, 2048);
-	if(ret != -1)
-	{
-		lwsl_notice("read() returned %d\n", ret);
-
-	}
 	struct per_vhost_data__rn1 *vhd = lws_container_of(w,
 			struct per_vhost_data__rn1, timeout_watcher);
 	lws_callback_on_writable_all_protocol_vhost(vhd->vhost, vhd->protocol);
@@ -66,10 +65,24 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		vhd->protocol = lws_get_protocol(wsi);
 		vhd->vhost = lws_get_vhost(wsi);
 
-		uv_timer_init(lws_uv_getloop(vhd->context, 0),
-			      &vhd->timeout_watcher);
-		uv_timer_start(&vhd->timeout_watcher,
-			       uv_timeout_cb_rn1, DUMB_PERIOD, DUMB_PERIOD);
+
+		uv_tcp_t* client = malloc(sizeof(uv_tcp_t));
+		uv_tcp_init(lws_uv_getloop(vhd->context, 0), client);
+
+		uv_connect_t* conn = malloc(sizeof(uv_connect_t));
+
+		struct sockaddr_in dest;
+		uv_ip4_addr("192.168.88.118", 22222, &dest);
+
+		uv_tcp_connect(conn, client, (const struct sockaddr*)&dest, tcphandler_established);
+
+		lwsl_notice("TCP connection requested...\n");
+
+
+//		uv_timer_init(lws_uv_getloop(vhd->context, 0),
+//			      &vhd->timeout_watcher);
+//		uv_timer_start(&vhd->timeout_watcher,
+//			       uv_timeout_cb_rn1, DUMB_PERIOD, DUMB_PERIOD);
 
 		break;
 
@@ -77,8 +90,8 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		if (!vhd)
 			break;
 	//	lwsl_notice("di: LWS_CALLBACK_PROTOCOL_DESTROY: v=%p, ctx=%p\n", vhd, vhd->context);
-		uv_timer_stop(&vhd->timeout_watcher);
-		uv_close((uv_handle_t *)&vhd->timeout_watcher, NULL);
+	//	uv_timer_stop(&vhd->timeout_watcher);
+	//	uv_close((uv_handle_t *)&vhd->timeout_watcher, NULL);
 		break;
 
 	case LWS_CALLBACK_ESTABLISHED:
@@ -142,29 +155,6 @@ init_protocol_rn1(struct lws_context *context,
 	c->count_protocols = ARRAY_SIZE(protocols);
 	c->extensions = NULL;
 	c->count_extensions = 0;
-
-
-	struct sockaddr_in name;
-
-	tcpsock = socket(PF_INET, SOCK_STREAM, 0);
-	if (tcpsock < 0)
-	{
-		lwsl_err("Creating TCP socket for robot failed.\n");
-		return 1;
-	}
-	name.sin_family = AF_INET;
-	name.sin_port = htons(22222);
-	name.sin_addr.s_addr = inet_addr("192.168.88.118");
-
-	if(connect(tcpsock , (struct sockaddr *)&name , sizeof(name)) < 0)
-	{
-		lwsl_err("TCP connect() to robot failed.\n");
-		return 1;
-	}
-
-	fcntl(tcpsock, F_SETFL, O_NONBLOCK);
-
-	lwsl_notice("TCP connection to the robot established!\n");
 
 	return 0;
 }
