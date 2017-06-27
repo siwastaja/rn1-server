@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #if !defined (LWS_PLUGIN_STATIC)
 #define LWS_DLL
@@ -13,6 +15,9 @@
 
 #define DUMB_PERIOD 50
 
+int tcpsock;
+
+
 struct per_vhost_data__rn1 {
 	uv_timer_t timeout_watcher;
 	struct lws_context *context;
@@ -24,8 +29,16 @@ struct per_session_data__rn1 {
 	int number;
 };
 
+uint8_t buf[2048];
+
 static void uv_timeout_cb_rn1(uv_timer_t *w)
 {
+	int ret = read(tcpsock, buf, 2048);
+	if(ret != -1)
+	{
+		lwsl_notice("read() returned %d\n", ret);
+
+	}
 	struct per_vhost_data__rn1 *vhd = lws_container_of(w,
 			struct per_vhost_data__rn1, timeout_watcher);
 	lws_callback_on_writable_all_protocol_vhost(vhd->vhost, vhd->protocol);
@@ -129,6 +142,29 @@ init_protocol_rn1(struct lws_context *context,
 	c->count_protocols = ARRAY_SIZE(protocols);
 	c->extensions = NULL;
 	c->count_extensions = 0;
+
+
+	struct sockaddr_in name;
+
+	tcpsock = socket(PF_INET, SOCK_STREAM, 0);
+	if (tcpsock < 0)
+	{
+		lwsl_err("Creating TCP socket for robot failed.\n");
+		return 1;
+	}
+	name.sin_family = AF_INET;
+	name.sin_port = htons(22222);
+	name.sin_addr.s_addr = inet_addr("192.168.88.118");
+
+	if(connect(tcpsock , (struct sockaddr *)&name , sizeof(name)) < 0)
+	{
+		lwsl_err("TCP connect() to robot failed.\n");
+		return 1;
+	}
+
+	fcntl(tcpsock, F_SETFL, O_NONBLOCK);
+
+	lwsl_notice("TCP connection to the robot established!\n");
 
 	return 0;
 }
