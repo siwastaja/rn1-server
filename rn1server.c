@@ -30,9 +30,33 @@ struct per_session_data__rn1 {
 
 uint8_t buf[2048];
 
+static void alloc_cb(uv_handle_t* handle, size_t suggest_size, uv_buf_t* buf)
+{
+	buf->base = malloc(suggest_size);
+	buf->len = suggest_size;
+}
+
+void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
+{
+	if(nread >= 0)
+	{
+		lwsl_notice("Got %d bytes!\n", (int)nread);
+	}
+	else // EOF
+	{
+		lwsl_notice("Got EOF!\n");
+//		uv_close((uv_handle_t*)tcp, on_close);
+	}
+
+	if(buf->base)
+		free(buf->base);
+}
+
 static void tcphandler_established(uv_connect_t *conn, int status)
 {
 	lwsl_notice("Connection to the robot established!\n");
+	uv_stream_t* stream = conn->handle;
+	uv_read_start(stream, alloc_cb, tcphandler_read);
 }
 
 
