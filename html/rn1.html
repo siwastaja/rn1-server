@@ -92,7 +92,9 @@
 <article>
 
 ws_url: <div id=ws_url>...</div><br>
-dbg: <div id=dbg>...</div><br>
+dbg1: <div id=dbg1>...</div><br>
+dbg2: <div id=dbg2>...</div><br>
+dbg3: <div id=dbg3>...</div><br>
 
 Johannes siwa muovi Pussi.
 
@@ -171,21 +173,70 @@ document.getElementById("ws_url").textContent = get_appropriate_ws_url();
 
 		socket_di.onmessage =function got_packet(msg)
 		{
-//			var c = document.getElementById("map_canvas");
-//			var ctx = c.getContext("2d");
-//			ctx.moveTo(0,0);
-//			ctx.lineTo(200,100);
-//			ctx.stroke();
 			if(msg.data instanceof Blob)
 			{
-				document.getElementById("dbg").textContent = "Yes.";
+				document.getElementById("dbg1").textContent = "Yes.";
 
 				var fileReader = new FileReader();
 				fileReader.onload = function()
 				{ 
 					var arrayBuffer = this.result;
-					var view = new Uint8Array(arrayBuffer);
-					document.getElementById("dbg").textContent = "Yeesbox!" + view[0] + " " + (view[1]*256+view[2]);			
+					var view = new Uint8Array(arrayBuffer.slice(0,3));
+					document.getElementById("dbg1").textContent = "Yeesbox!" + view[0] + " " + (view[1]*256+view[2]);
+
+					switch(view[0])
+					{
+						case 130:
+						{
+							document.getElementById("dbg2").textContent = "recog coords";
+							var cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
+							var cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
+							var cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
+
+							document.getElementById("dbg2").textContent = "ANG = " + cur_angle + " X = " + cur_x + " Y = " + cur_y;
+
+							var c = document.getElementById("map_canvas");
+							var ctx = c.getContext("2d");
+							ctx.fillStyle = "green";
+							ctx.fillRect(cur_x+400-5,cur_y+400-5, 10, 10);
+
+						}
+						break;
+
+						case 131:
+						{
+							var lidar_robot_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
+							var lidar_robot_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
+							var lidar_robot_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
+
+							document.getElementById("dbg3").textContent = "ANG = " + lidar_robot_angle + " X = " + lidar_robot_x + " Y = " + lidar_robot_y;
+
+							for(i = 0; i < 180; i++)
+							{
+								var x = (new DataView(arrayBuffer.slice(13+2*i+0,13+2*i+1)).getInt8(0, false));
+								var y = (new DataView(arrayBuffer.slice(13+2*i+1,13+2*i+2)).getInt8(0, false));
+								if(x != 0 || y != 0)
+								{
+									x = x*1 + lidar_robot_x;
+									y = y*1 + lidar_robot_y;
+									var c = document.getElementById("map_canvas");
+									var ctx = c.getContext("2d");
+									ctx.fillStyle = "red";
+									ctx.fillRect(x+400-2,y+400-2, 4, 4);
+								}
+							}
+
+
+						}
+						break;
+
+						default:
+						{
+							document.getElementById("dbg2").textContent = "unrecognized: " + view[0];
+						}
+
+					}
+
 				};
 				fileReader.readAsArrayBuffer(msg.data);
 
