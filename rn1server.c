@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <arpa/inet.h>
 
 #if !defined (LWS_PLUGIN_STATIC)
@@ -12,8 +14,6 @@
 #if UV_VERSION_MAJOR == 0
 #error "UV version too old."
 #endif
-
-#define DUMB_PERIOD 50
 
 struct per_vhost_data__rn1 {
 	uv_tcp_t client;
@@ -30,6 +30,32 @@ struct per_vhost_data__rn1 *common_vhd;
 struct per_session_data__rn1 {
 	int number;
 };
+
+pid_t my_pid;
+static void run_map_sync()
+{
+	if((my_pid = fork()) == 0)
+	{
+		static char *argv[] = {"/home/hrst/rn1-server/map_sync.sh", NULL};
+		if((execve(argv[0], (char **)argv , NULL)) == -1)
+		{
+			lwsl_err("run_map_rsync(): execve failed\n");
+		}
+	}
+	else
+	{
+		lwsl_err("run_map_rsync(): fork failed\n");
+	}
+}
+
+static int poll_map_rsync()
+{
+	int status = 0;
+	if(waitpid(my_pid , &status , WNOHANG) == 0)
+		return -999999;
+
+	return status;
+}
 
 static void alloc_cb(uv_handle_t* handle, size_t suggest_size, uv_buf_t* buf)
 {
@@ -54,19 +80,21 @@ typedef union
 static tcpbuf_t tcpbuf;
 static int tcpbufloc;
 
-int charging, charge_finished;
-float bat_voltage;
-int bat_percentage;
+static int send_png = 0;
 
 void request_write_callback()
 {
-	lwsl_notice("          request_write_callback()\n");
+//	lwsl_notice("          request_write_callback()\n");
 	lws_callback_on_writable_all_protocol_vhost(common_vhd->vhost, common_vhd->protocol);
 }
 
-int latest_msg_len;
-uint8_t internal_latest_msg[LWS_PRE+2048];
-uint8_t* latest_msg;
+#define MSG_RINGBUF_LEN 16
+
+int latest_msg_lens[MSG_RINGBUF_LEN];
+uint8_t internal_latest_msgs[MSG_RINGBUF_LEN][LWS_PRE+2048];
+uint8_t* latest_msgs[MSG_RINGBUF_LEN];
+
+int msg_ringbuf_wr, msg_ringbuf_rd;
 
 void parse_message()
 {
@@ -77,36 +105,20 @@ void parse_message()
 		return;
 	}
 
-	memcpy(latest_msg, tcpbuf.a, len);
-	latest_msg_len = len;
-
 	request_write_callback();
 
+	int next = msg_ringbuf_wr+1; if(next >= MSG_RINGBUF_LEN) next = 0;
 
-/*	switch(tcpbuf.b.msgid)
+	if(next == msg_ringbuf_rd)
 	{
-		case 130: // Location status
-		{
-
-		}
-		break;
-
-		case 134: // Battery status
-		{
-			charging = tcpbuf.b.pay[0]&1;
-			charge_finished = tcpbuf.b.pay[0]&2;
-			bat_voltage = (float)(((int)tcpbuf.b.pay[1]<<8) | tcpbuf.b.pay[2])/1000.0;
-			bat_percentage = tcpbuf.b.pay[3];
-
-			request_write_callback();
-		}
-		break;
-
-
-		default:
-		break;
+		lwsl_notice("ignoring message(%d) due to ringbuf overrun\n", tcpbuf.b.msgid);
+		return;
 	}
-*/
+
+	memcpy(latest_msgs[msg_ringbuf_wr], tcpbuf.a, len);
+	latest_msg_lens[msg_ringbuf_wr] = len;
+
+	msg_ringbuf_wr = next;
 }
 
 void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
@@ -158,7 +170,7 @@ void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
 
 				if(tcpbufloc >= msglen+3)
 				{
-					lwsl_notice("tcpbufloc(%d) >= msglen+3(%d), parsing the message\n", (int)tcpbufloc, msglen+3);
+//					lwsl_notice("tcpbufloc(%d) >= msglen+3(%d), parsing(%d)\n", (int)tcpbufloc, msglen+3, tcpbuf.b.msgid);
 					parse_message();
 					tcpbufloc = 0;
 				}
@@ -217,7 +229,11 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 
 		uv_tcp_init(lws_uv_getloop(vhd->context, 0), &vhd->client);
 		common_vhd = vhd;
-		latest_msg = &internal_latest_msg[LWS_PRE];
+		int i;
+		for(i = 0; i < MSG_RINGBUF_LEN; i++)
+		{
+			latest_msgs[i] = &internal_latest_msgs[i][LWS_PRE];
+		}
 		struct sockaddr_in dest;
 		uv_ip4_addr("192.168.88.118", 22222, &dest);
 
@@ -245,10 +261,46 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		break;
 
 	case LWS_CALLBACK_SERVER_WRITEABLE:
-		lwsl_notice("                  got write callback\n");
-//		n = lws_snprintf((char *)p, sizeof(buf) - LWS_PRE, "BATT %.2f V (%d%%)", bat_voltage, bat_percentage);
-//		m = lws_write(wsi, p, n, LWS_WRITE_TEXT);
-		lws_write(wsi, latest_msg, latest_msg_len, LWS_WRITE_BINARY);
+//		lwsl_notice("                  got write callback\n");
+
+		send_png++;
+
+		if(send_png > 10)
+		{
+			send_png = 0;
+			FILE *f_png = fopen("/home/hrst/rn1-server/acdcabba_0_128_128.map.png", "rb");
+			if(!f_png)
+			{
+				lwsl_notice("err opening map file\n");
+			}
+			else
+			{
+				uint8_t pngdata_internal[LWS_PRE + 100000];
+				uint8_t *pngdata = &pngdata_internal[LWS_PRE];
+				pngdata[0] = 0xff; // map PNG message type id.
+				pngdata[1] = 128;
+				pngdata[2] = 128;
+				int len = fread(&pngdata[3], 1, 99995, f_png);
+				if(len < 100 || len > 99994)
+				{
+					lwsl_notice("Illegal png file.\n");
+				}
+				else
+				{
+					lwsl_notice("Sending png, len=%d\n", len);
+					lws_write(wsi, pngdata, len+3, LWS_WRITE_BINARY);
+				}
+			}
+		}
+		else
+			lws_write(wsi, latest_msgs[msg_ringbuf_rd], latest_msg_lens[msg_ringbuf_rd], LWS_WRITE_BINARY);
+
+		msg_ringbuf_rd++; if(msg_ringbuf_rd >= MSG_RINGBUF_LEN) msg_ringbuf_rd = 0;
+		if(msg_ringbuf_wr != msg_ringbuf_rd)
+		{
+			request_write_callback();
+//			lwsl_notice("sending more, rd=%d wr=%d\n", msg_ringbuf_wr, msg_ringbuf_rd);
+		}
 		break;
 
 	case LWS_CALLBACK_RECEIVE:
