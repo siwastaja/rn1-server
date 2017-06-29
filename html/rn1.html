@@ -122,15 +122,11 @@ function san(s)
 	return s;
 }
 
+/*
 function get_appropriate_ws_url()
 {
 	var pcol;
 	var u = document.URL;
-
-	/*
-	 * We open the websocket encrypted if this page came on an
-	 * https:// url itself, otherwise unencrypted
-	 */
 
 	if (u.substring(0, 5) == "https") {
 		pcol = "wss://";
@@ -143,15 +139,16 @@ function get_appropriate_ws_url()
 
 	u = u.split('/');
 
-	/* + "/xxx" bit is for IE10 workaround */
-
 	return pcol + u[0] + "/xxx";
 }
+*/
 
+function get_appropriate_ws_url()
+{
+	return "wss://ojabotti.ha.fi:33333/xxx";
+}
 
 document.getElementById("ws_url").textContent = get_appropriate_ws_url();
-
-/* dumb increment protocol */
 	
 	var socket_di;
 
@@ -186,14 +183,31 @@ document.getElementById("ws_url").textContent = get_appropriate_ws_url();
 
 					switch(view[0])
 					{
+						case 255:
+						{
+							document.getElementById("dbg2").textContent = "Got png!";
+							var image = new Image();
+							image.src = URL.createObjectURL(msg.data.slice(3, msg.data.size, "image/png"));
+							image.width = 256;
+							image.height = 256;
+
+							var c = document.getElementById("map_canvas");
+							var ctx = c.getContext("2d");
+							image.onload = function()
+							{
+								ctx.drawImage(image, 100, 100);
+							}
+							break;
+
+						}
 						case 130:
 						{
-							document.getElementById("dbg2").textContent = "recog coords";
+//							document.getElementById("dbg2").textContent = "recog coords";
 							var cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
 							var cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
 							var cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
 
-							document.getElementById("dbg2").textContent = "ANG = " + cur_angle + " X = " + cur_x + " Y = " + cur_y;
+//							document.getElementById("dbg2").textContent = "ANG = " + cur_angle + " X = " + cur_x + " Y = " + cur_y;
 
 							var c = document.getElementById("map_canvas");
 							var ctx = c.getContext("2d");
@@ -267,7 +281,6 @@ document.getElementById("ws_url").textContent = get_appropriate_ws_url();
 
 	try {
 		socket_status.onopen = function() {
-			document.getElementById("s_statustd").style.backgroundColor = "#40ff40";
 			document.getElementById("s_status").innerHTML =
 				" <b>websocket connection opened</b><br>" +
 				san(socket_status.extensions);
@@ -301,7 +314,6 @@ document.getElementById("ws_url").textContent = get_appropriate_ws_url();
 		} 
 
 		socket_status.onclose = function(){
-			document.getElementById("s_statustd").style.backgroundColor = "#ff4040";
 			document.getElementById("s_status").textContent = " websocket connection CLOSED ";
 		}
 	} catch(exception) {
