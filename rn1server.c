@@ -5,6 +5,18 @@
 #include <sys/wait.h>
 #include <arpa/inet.h>
 
+#define I32TOBUF(i_, b_, s_) {(b_)[(s_)] = ((i_)>>24)&0xff; (b_)[(s_)+1] = ((i_)>>16)&0xff; (b_)[(s_)+2] = ((i_)>>8)&0xff; (b_)[(s_)+3] = ((i_)>>0)&0xff; }
+#define I16TOBUF(i_, b_, s_) {(b_)[(s_)] = ((i_)>>8)&0xff; (b_)[(s_)+1] = ((i_)>>0)&0xff; }
+#define I16FROMBUF(b_, s_)  ((int16_t)( ((uint16_t)(b_)[(s_)+0]<<8) | ((uint16_t)(b_)[(s_)+1]<<0) ))
+#define I32FROMBUF(b_, s_)  ((int32_t)( ((uint32_t)(b_)[(s_)+0]<<24) | ((uint32_t)(b_)[(s_)+1]<<16) | ((uint32_t)(b_)[(s_)+2]<<8) | ((uint32_t)(b_)[(s_)+3]<<0) ))
+
+#define MAP_UNIT_W 40  // in mm
+#define MAP_PAGE_W 256 // in map_units
+#define MAP_W 256
+#define MAP_MIDDLE_PAGE (MAP_W/2)
+#define MAP_MIDDLE_UNIT (MAP_PAGE_W * MAP_MIDDLE_PAGE)
+
+
 #if !defined (LWS_PLUGIN_STATIC)
 #define LWS_DLL
 #define LWS_INTERNAL
@@ -28,7 +40,10 @@ struct per_vhost_data__rn1 {
 struct per_vhost_data__rn1 *common_vhd;
 
 struct per_session_data__rn1 {
-	int number;
+	int32_t view_start_x;
+	int32_t view_start_y;
+	int32_t view_end_x;
+	int32_t view_end_y;
 };
 
 pid_t my_pid;
@@ -79,8 +94,6 @@ typedef union
 
 static tcpbuf_t tcpbuf;
 static int tcpbufloc;
-
-static int send_png = 0;
 
 void request_write_callback()
 {
@@ -188,6 +201,20 @@ void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
 		free(buf->base);
 }
 
+uv_write_t write_req;
+uv_buf_t write_uvbuf;
+
+static void uv_tcp_write_cb(uv_write_t* req, int status)
+{
+	lwsl_notice("UV TCP WRITE CB status=%d\n", status);
+}
+
+static void do_route(int32_t x, int32_t y)
+{
+	write_uvbuf
+	uv_write(&write_req, common_vhd->stream, write_uvbuf, 1, uv_tcp_write_cb);
+}
+
 static void tcphandler_established(uv_connect_t *conn, int status)
 {
 	lwsl_notice("Connection to the robot established!\n");
@@ -203,6 +230,12 @@ static void uv_timeout_cb_rn1(uv_timer_t *w)
 	struct per_vhost_data__rn1 *vhd = lws_container_of(w,
 			struct per_vhost_data__rn1, timeout_watcher);
 	lws_callback_on_writable_all_protocol_vhost(vhd->vhost, vhd->protocol);
+}
+
+static int png_send_state = 0;
+static void do_send_png()
+{
+	png_send_state = 1;
 }
 
 static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
@@ -257,62 +290,115 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		break;
 
 	case LWS_CALLBACK_ESTABLISHED:
-		pss->number = 0;
+		pss->view_start_x = -100;
+		pss->view_start_y = -100;
+		pss->view_end_x = 100;
+		pss->view_end_y = 100;
 		break;
 
 	case LWS_CALLBACK_SERVER_WRITEABLE:
+	{
 //		lwsl_notice("                  got write callback\n");
 
-		send_png++;
+//		send_png++;
 
-		if(send_png > 10)
+		static int xpage_s;
+		static int ypage_s;
+		static int xpage_e;
+		static int ypage_e;
+
+		static int xx, yy;
+
+		if(png_send_state == 0)
 		{
-			send_png = 0;
-			FILE *f_png = fopen("/home/hrst/rn1-server/acdcabba_0_128_128.map.png", "rb");
+			lws_write(wsi, latest_msgs[msg_ringbuf_rd], latest_msg_lens[msg_ringbuf_rd], LWS_WRITE_BINARY);
+
+			msg_ringbuf_rd++; if(msg_ringbuf_rd >= MSG_RINGBUF_LEN) msg_ringbuf_rd = 0;
+			if(msg_ringbuf_wr != msg_ringbuf_rd)
+			{
+				request_write_callback();
+	//			lwsl_notice("sending more, rd=%d wr=%d\n", msg_ringbuf_wr, msg_ringbuf_rd);
+			}
+		}
+
+		if(png_send_state == 1)
+		{
+			xpage_s = (pss->view_start_x/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
+			ypage_s = (pss->view_start_y/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
+			xpage_e = (pss->view_end_x/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
+			ypage_e = (pss->view_end_y/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
+			xx = xpage_s;
+			yy = ypage_s;
+			png_send_state++;
+		}
+		if(png_send_state == 2)
+		{
+			char fname[1000];
+			snprintf(fname, 999, "/home/hrst/rn1-server/acdcabba_0_%u_%u.map.png", xx, yy);
+			FILE *f_png = fopen(fname, "rb");
 			if(!f_png)
 			{
-				lwsl_notice("err opening map file\n");
+//				if(errno != ENOENT)
+					lwsl_notice("err %d opening map file\n", errno);
 			}
 			else
 			{
 				uint8_t pngdata_internal[LWS_PRE + 100000];
 				uint8_t *pngdata = &pngdata_internal[LWS_PRE];
-				pngdata[0] = 0xff; // map PNG message type id.
-				pngdata[1] = 128;
-				pngdata[2] = 128;
-				int len = fread(&pngdata[3], 1, 99995, f_png);
-				if(len < 100 || len > 99994)
+				pngdata[0] = 200; // map PNG message type id.
+				int x = (xx*MAP_PAGE_W - MAP_MIDDLE_UNIT)*MAP_UNIT_W;
+				int y = (yy*MAP_PAGE_W - MAP_MIDDLE_UNIT)*MAP_UNIT_W;
+				lwsl_notice("Sending png map page ( %d , %d ), start mm coords ( %d , %d )\n", xx, yy, x, y);
+				I32TOBUF(x, pngdata, 1);
+				I32TOBUF(y, pngdata, 5);
+				pngdata[9] = 1;
+				int len = fread(&pngdata[10], 1, 99982, f_png);
+				if(len < 100 || len > 99980)
 				{
 					lwsl_notice("Illegal png file.\n");
 				}
 				else
 				{
 					lwsl_notice("Sending png, len=%d\n", len);
-					lws_write(wsi, pngdata, len+3, LWS_WRITE_BINARY);
+					lws_write(wsi, pngdata, len+10, LWS_WRITE_BINARY);
+					if(xx < xpage_e && yy < ypage_e) request_write_callback(); // to send more images
+				}
+			}
+			xx++;
+			if(xx > xpage_e)
+			{
+				xx = xpage_s;
+				yy++;
+				if(yy > ypage_e)
+				{
+					png_send_state = 0;
 				}
 			}
 		}
-		else
-			lws_write(wsi, latest_msgs[msg_ringbuf_rd], latest_msg_lens[msg_ringbuf_rd], LWS_WRITE_BINARY);
 
-		msg_ringbuf_rd++; if(msg_ringbuf_rd >= MSG_RINGBUF_LEN) msg_ringbuf_rd = 0;
-		if(msg_ringbuf_wr != msg_ringbuf_rd)
-		{
-			request_write_callback();
-//			lwsl_notice("sending more, rd=%d wr=%d\n", msg_ringbuf_wr, msg_ringbuf_rd);
-		}
+	}
 		break;
 
 	case LWS_CALLBACK_RECEIVE:
-		if (len < 6)
-			break;
-		if (strcmp((const char *)in, "reset\n") == 0)
-			pss->number = 0;
-		if (strcmp((const char *)in, "closeme\n") == 0) {
-			lwsl_notice("dumb_inc: closing as requested\n");
-			lws_close_reason(wsi, LWS_CLOSE_STATUS_GOINGAWAY,
-					 (unsigned char *)"seeya", 5);
-			return -1;
+		if(len == 17 && ((uint8_t*)in)[0] == 1)
+		{
+			pss->view_start_x = I32FROMBUF((uint8_t*)in, 1);
+			pss->view_start_y = I32FROMBUF((uint8_t*)in, 5);
+			pss->view_end_x = I32FROMBUF((uint8_t*)in, 9);
+			pss->view_end_y = I32FROMBUF((uint8_t*)in, 13);
+			lwsl_notice("View update: topleft ( %d , %d )  bottomright ( %d , %d)\n", pss->view_start_x, pss->view_start_y, pss->view_end_x, pss->view_end_y);
+			do_send_png();
+		}
+		else if(len == 9 && ((uint8_t*)int[0] == 2)
+		{
+			int32_t dest_x = I32FROMBUF((uint8_t*)in, 1);
+			int32_t dest_y = I32FROMBUF((uint8_t*)in, 5);
+			lwsl_notice("ROUTE DEST: %d, %d\n", dest_x, dest_y);
+			do_route(dest_x, dest_y);
+		}
+		else
+		{
+			lwsl_notice("Unrecognized rx from client, len=%d, in[0]=0x%02x\n", (int)len, (len>0) ? (((uint8_t*)in)[0]) : (0));
 		}
 		break;
 
