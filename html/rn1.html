@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <script src="/lws-common.js"></script>
+<script type="text/javascript" src="http://code.jquery.com/jquery.min.js"></script>
 <title>RN1 Webclient</title>
 <style type="text/css">
 	span.title { font-size:18pt; font: Arial; font-weight:normal; text-align:center; color:#000000; }
@@ -95,11 +96,17 @@ ws_url: <div id=ws_url>...</div><br>
 dbg1: <div id=dbg1>...</div><br>
 dbg2: <div id=dbg2>...</div><br>
 dbg3: <div id=dbg3>...</div><br>
+dbg4: <div id=dbg4>...</div><br>
+view: <div id=dbgview>...</div><br>
 
 Johannes siwa muovi Pussi.
 
 <span id=wsdi_status>Websocket connection not initialized</span>
 <input type=button id=offset value="Reset counter">
+
+<input type=button id=zoom_out value="Zoom out">
+<input type=button id=zoom_in value="Zoom in">
+
 
 <canvas id="map_canvas" width="800" height="800" style="border:1px solid #000000;"></canvas>
 
@@ -108,6 +115,8 @@ Johannes siwa muovi Pussi.
 <script nonce="lwscaro">
 
 document.getElementById('offset').onclick = reset;
+document.getElementById('zoom_out').onclick = do_zoom_out;
+document.getElementById('zoom_in').onclick = do_zoom_in;
 
 /*
  * We display untrusted stuff in html context... reject anything
@@ -150,175 +159,312 @@ function get_appropriate_ws_url()
 
 document.getElementById("ws_url").textContent = get_appropriate_ws_url();
 	
-	var socket_di;
 
-	if (typeof MozWebSocket != "undefined") {
-		socket_di = new MozWebSocket(get_appropriate_ws_url(),
-				   "rn1-protocol");
-	} else {
-		socket_di = new WebSocket(get_appropriate_ws_url(),
-				   "rn1-protocol");
+var canv = document.getElementById("map_canvas");
+var ct = canv.getContext("2d");
+var canv_w=canv.width;
+var canv_h=canv.height;
+
+var view_start_x = -3000;
+var view_start_y = -3000;
+var mm_per_pixel = 10.0;
+
+var drag_start_x = 0.0;
+var drag_start_y = 0.0;
+
+function update_view()
+{
+	document.getElementById("dbgview").textContent = "Topleft: ( " + view_start_x + " , " + view_start_y + " )  mm_per_pixel = " + mm_per_pixel;
+
+	var view_end_x = view_start_x + canv_w*mm_per_pixel;
+	var view_end_y = view_start_y + canv_h*mm_per_pixel;
+
+	var buffer = new ArrayBuffer(17);
+
+	new DataView(buffer).setUint8(0, 1);
+	new DataView(buffer).setInt32(1, view_start_x, false);
+	new DataView(buffer).setInt32(5, view_start_y, false);
+	new DataView(buffer).setInt32(9, view_end_x, false);
+	new DataView(buffer).setInt32(13, view_end_y, false);
+
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+	ct.clearRect(0, 0, canv_w, canv_h);
+}
+
+function scroll_view(x, y)
+{
+	view_start_x -= x*mm_per_pixel;
+	view_start_y -= y*mm_per_pixel;
+
+	update_view();
+}
+
+
+$(function()
+{
+	var isDragging=false;
+
+	function handleMouseDown(e)
+	{
+		var rect = canv.getBoundingClientRect();
+		drag_start_x=parseInt(e.clientX-rect.left);
+		drag_start_y=parseInt(e.clientY-rect.top);
+		isDragging=true;
 	}
 
-
-	try {
-		socket_di.onopen = function() {
-			document.getElementById("wsdi_status").innerHTML =
-				" <b>websocket connection opened</b><br>" +
-				san(socket_di.extensions);
-		} 
-
-		socket_di.onmessage =function got_packet(msg)
+	function handleMouseUp(e)
+	{
+		if(isDragging)
 		{
-			if(msg.data instanceof Blob)
+			var rect = canv.getBoundingClientRect();
+			canMouseX=parseInt(e.clientX-rect.left);
+			canMouseY=parseInt(e.clientY-rect.top);
+			drag_x=canMouseX - drag_start_x;
+			drag_y=canMouseY - drag_start_y;
+
+			if(drag_x > -5 && drag_x < 5 && drag_y > -5 && drag_y < 5)
 			{
-				document.getElementById("dbg1").textContent = "Yes.";
+				document.getElementById("dbg4").textContent = "CLICK: X = " + canMouseX + "  Y = " + canMouseY;
+			}
+			else
+			{
+				document.getElementById("dbg4").textContent = "DRAG: X = " + drag_x + "  Y = " + drag_y;
+				scroll_view(drag_x, drag_y);
+			}
+		}
 
-				var fileReader = new FileReader();
-				fileReader.onload = function()
-				{ 
-					var arrayBuffer = this.result;
-					var view = new Uint8Array(arrayBuffer.slice(0,3));
-					document.getElementById("dbg1").textContent = "Yeesbox!" + view[0] + " " + (view[1]*256+view[2]);
+		isDragging=false;
+	}
 
-					switch(view[0])
+	function handleMouseOut(e)
+	{
+		handleMouseUp(e);
+//		isDragging=false;
+	}
+
+	function handleMouseMove(e)
+	{
+		var rect = canv.getBoundingClientRect();
+		canMouseX=parseInt(e.clientX-rect.left);
+		canMouseY=parseInt(e.clientY-rect.top);
+
+		drag_x=canMouseX - drag_start_x;
+		drag_y=canMouseY - drag_start_y;
+
+		if(isDragging)
+		{
+			document.getElementById("dbg4").textContent = "X = " + drag_x + "  Y = " + drag_y;
+		}
+	}
+
+	$("#map_canvas").mousedown(function(e){handleMouseDown(e);});
+	$("#map_canvas").mousemove(function(e){handleMouseMove(e);});
+	$("#map_canvas").mouseup(function(e){handleMouseUp(e);});
+	$("#map_canvas").mouseout(function(e){handleMouseOut(e);});
+});
+
+
+function do_zoom_out()
+{
+	mm_per_pixel *= 1.4;
+	update_view();
+}
+
+function do_zoom_in()
+{
+	mm_per_pixel *= 0.7;
+	update_view();
+}
+
+var socket_di;
+
+if (typeof MozWebSocket != "undefined") {
+	socket_di = new MozWebSocket(get_appropriate_ws_url(),
+			   "rn1-protocol");
+} else {
+	socket_di = new WebSocket(get_appropriate_ws_url(),
+			   "rn1-protocol");
+}
+
+
+try {
+	socket_di.onopen = function() {
+		document.getElementById("wsdi_status").innerHTML =
+			" <b>websocket connection opened</b><br>" +
+			san(socket_di.extensions);
+	} 
+
+	socket_di.onmessage =function got_packet(msg)
+	{
+		if(msg.data instanceof Blob)
+		{
+			document.getElementById("dbg1").textContent = "Yes.";
+
+			var fileReader = new FileReader();
+			fileReader.onload = function()
+			{ 
+				var arrayBuffer = this.result;
+				var view = new Uint8Array(arrayBuffer.slice(0,3));
+				document.getElementById("dbg1").textContent = "Yeesbox!" + view[0] + " " + (view[1]*256+view[2]);
+
+				switch(view[0])
+				{
+					case 200:
 					{
-						case 255:
+						document.getElementById("dbg2").textContent = "Got png!";
+						var image = new Image();
+						image.src = URL.createObjectURL(msg.data.slice(10, msg.data.size, "image/png"));
+						var img_x_mm = (new DataView(arrayBuffer).getInt32(1, false));
+						var img_y_mm = (new DataView(arrayBuffer).getInt32(5, false));
+						var status = (new DataView(arrayBuffer).getUint8(9));
+
+						image.width = 256;
+						image.height = 256;
+
+						var img_x = (img_x_mm - view_start_x) / mm_per_pixel;
+						var img_y = (img_y_mm - view_start_y) / mm_per_pixel;
+
+						//document.getElementById("dbg2").textContent = "Got png! mm = (" + img_x_mm + " , " + img_y_mm + " ) pix = ( " + img_x + " , " + img_y + " )";
+
+						console.log("Got png! mm = (" + img_x_mm + " , " + img_y_mm + " ) pix = ( " + img_x + " , " + img_y + " )");
+
+						var c = document.getElementById("map_canvas");
+						var ctx = c.getContext("2d");
+						image.onload = function()
 						{
-							document.getElementById("dbg2").textContent = "Got png!";
-							var image = new Image();
-							image.src = URL.createObjectURL(msg.data.slice(3, msg.data.size, "image/png"));
-							image.width = 256;
-							image.height = 256;
-
-							var c = document.getElementById("map_canvas");
-							var ctx = c.getContext("2d");
-							image.onload = function()
-							{
-								ctx.drawImage(image, 100, 100);
-							}
-							break;
-
+							ctx.drawImage(image, img_x, img_y, (256*40)/mm_per_pixel, (256*40)/mm_per_pixel);
 						}
-						case 130:
-						{
+						break;
+
+					}
+					case 130:
+					{
 //							document.getElementById("dbg2").textContent = "recog coords";
-							var cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
-							var cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
-							var cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
+						var cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
+						var cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
+						var cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
+
+						var dot_x = (cur_x - view_start_x) / mm_per_pixel;
+						var dot_y = (cur_y - view_start_y) / mm_per_pixel;
+
 
 //							document.getElementById("dbg2").textContent = "ANG = " + cur_angle + " X = " + cur_x + " Y = " + cur_y;
 
-							var c = document.getElementById("map_canvas");
-							var ctx = c.getContext("2d");
-							ctx.fillStyle = "green";
-							ctx.fillRect(cur_x+400-5,cur_y+400-5, 10, 10);
-
-						}
-						break;
-
-						case 131:
-						{
-							var lidar_robot_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
-							var lidar_robot_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
-							var lidar_robot_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
-
-							document.getElementById("dbg3").textContent = "ANG = " + lidar_robot_angle + " X = " + lidar_robot_x + " Y = " + lidar_robot_y;
-
-							for(i = 0; i < 180; i++)
-							{
-								var x = (new DataView(arrayBuffer.slice(13+2*i+0,13+2*i+1)).getInt8(0, false));
-								var y = (new DataView(arrayBuffer.slice(13+2*i+1,13+2*i+2)).getInt8(0, false));
-								if(x != 0 || y != 0)
-								{
-									x = x*1 + lidar_robot_x;
-									y = y*1 + lidar_robot_y;
-									var c = document.getElementById("map_canvas");
-									var ctx = c.getContext("2d");
-									ctx.fillStyle = "red";
-									ctx.fillRect(x+400-2,y+400-2, 4, 4);
-								}
-							}
-
-
-						}
-						break;
-
-						default:
-						{
-							document.getElementById("dbg2").textContent = "unrecognized: " + view[0];
-						}
+						var c = document.getElementById("map_canvas");
+						var ctx = c.getContext("2d");
+						ctx.fillStyle = "green";
+						ctx.fillRect(dot_x-5,dot_y-5, 10, 10);
 
 					}
+					break;
 
-				};
-				fileReader.readAsArrayBuffer(msg.data);
+					case 131:
+					{
+						var lidar_robot_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
+						var lidar_robot_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
+						var lidar_robot_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
+
+						document.getElementById("dbg3").textContent = "ANG = " + lidar_robot_angle + " X = " + lidar_robot_x + " Y = " + lidar_robot_y;
+
+						for(i = 0; i < 180; i++)
+						{
+							var x = (new DataView(arrayBuffer.slice(13+2*i+0,13+2*i+1)).getInt8(0, false));
+							var y = (new DataView(arrayBuffer.slice(13+2*i+1,13+2*i+2)).getInt8(0, false));
+							if(x != 0 || y != 0)
+							{
+								x = x*40 + lidar_robot_x;
+								y = y*40 + lidar_robot_y;
+
+								var dot_x = (x - view_start_x) / mm_per_pixel;
+								var dot_y = (y - view_start_y) / mm_per_pixel;
+
+								var c = document.getElementById("map_canvas");
+								var ctx = c.getContext("2d");
+								ctx.fillStyle = "red";
+								ctx.fillRect(dot_x-2,dot_y-2, 4, 4);
+							}
+						}
+
+
+					}
+					break;
+
+					default:
+					{
+//						document.getElementById("dbg2").textContent = "unrecognized: " + view[0];
+					}
+
+				}
+
+			};
+			fileReader.readAsArrayBuffer(msg.data);
 
 //				var reader = new FileReader();
 //				reader.addEventListener("loadend", function() {});
 //				reader.readAsArrayBuffer(msg.data);
-				
-			}
-		} 
-
-		socket_di.onclose = function(){
-			document.getElementById("wsdi_status").textContent = " websocket connection CLOSED ";
+			
 		}
-	} catch(exception) {
-		alert('<p>Error' + exception);  
+	} 
+
+	socket_di.onclose = function(){
+		document.getElementById("wsdi_status").textContent = " websocket connection CLOSED ";
 	}
-	
-	var socket_status, jso, s;
+} catch(exception) {
+	alert('<p>Error' + exception);  
+}
 
-	if (typeof MozWebSocket != "undefined") {
-		socket_status = new MozWebSocket(get_appropriate_ws_url(),
-				   "lws-status");
-	} else {
-		socket_status = new WebSocket(get_appropriate_ws_url(),
-				   "lws-status");
-	}
+var socket_status, jso, s;
+
+if (typeof MozWebSocket != "undefined") {
+	socket_status = new MozWebSocket(get_appropriate_ws_url(),
+			   "lws-status");
+} else {
+	socket_status = new WebSocket(get_appropriate_ws_url(),
+			   "lws-status");
+}
 
 
-	try {
-		socket_status.onopen = function() {
-			document.getElementById("s_status").innerHTML =
-				" <b>websocket connection opened</b><br>" +
-				san(socket_status.extensions);
-		} 
+try {
+	socket_status.onopen = function() {
+		document.getElementById("s_status").innerHTML =
+			" <b>websocket connection opened</b><br>" +
+			san(socket_status.extensions);
+	} 
 
-		socket_status.onmessage =function got_packet(msg) {
-			var s;
+	socket_status.onmessage =function got_packet(msg) {
+		var s;
+		
+		jso = JSON.parse(msg.data);
+		
+		document.getElementById("servinfo").innerHTML = 
+			"<table><tr><td class=l>Build info</td><td>"+
+				san(jso.version) + "</td></tr>" +
+				"<tr><td class=l>Server info</td><td>" +
+				san(jso.hostname) + "</td></tr>" +
+				"</table>";
+		s="<table>";
+		var n;
+		for (n = 0; n < jso.conns.length; n++) {
+			var d = new Date(parseInt(jso.conns[n].time) * 1000);
 			
-			jso = JSON.parse(msg.data);
-			
-			document.getElementById("servinfo").innerHTML = 
-				"<table><tr><td class=l>Build info</td><td>"+
-					san(jso.version) + "</td></tr>" +
-					"<tr><td class=l>Server info</td><td>" +
-					san(jso.hostname) + "</td></tr>" +
-					"</table>";
-			s="<table>";
-			var n;
-			for (n = 0; n < jso.conns.length; n++) {
-				var d = new Date(parseInt(jso.conns[n].time) * 1000);
-				
-				s = s + "<tr><td class=l>client " + (n + 1) +
-				"</td><td><b>" + san(jso.conns[n].peer) +
-				"</b><br>" + san(d.toString()) +
-				"<br>" + san(jso.conns[n].ua) +
-				"</td></tr>";
-			}
-			s = s + "</table>";
-			
-			document.getElementById("conninfo").innerHTML = s;
-		} 
-
-		socket_status.onclose = function(){
-			document.getElementById("s_status").textContent = " websocket connection CLOSED ";
+			s = s + "<tr><td class=l>client " + (n + 1) +
+			"</td><td><b>" + san(jso.conns[n].peer) +
+			"</b><br>" + san(d.toString()) +
+			"<br>" + san(jso.conns[n].ua) +
+			"</td></tr>";
 		}
-	} catch(exception) {
-		alert('<p>Error' + exception);  
+		s = s + "</table>";
+		
+		document.getElementById("conninfo").innerHTML = s;
+	} 
+
+	socket_status.onclose = function(){
+		document.getElementById("s_status").textContent = " websocket connection CLOSED ";
 	}
+} catch(exception) {
+	alert('<p>Error' + exception);  
+}
 
 function reset() {
 	socket_di.send("reset\n");
