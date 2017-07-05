@@ -95,6 +95,10 @@ int main(int argc, char** argv)
 
 			int alpha = (30*(int)page.units[x][y].num_seen)/3 + (255/3);
 			if(alpha > 255) alpha=255;
+
+			int back_r = 170, back_g = 200, back_b = 230;
+
+			int r = 0, g = 0, b = 0;
 			if(page.units[x][y].num_obstacles)
 			{
 				int lvl = WALL_LEVEL(page.units[x][y]);
@@ -105,32 +109,42 @@ int main(int argc, char** argv)
 					color = 255;
 				}
 
-				px[0] = color;
-				px[1] = color;
-				px[2] = color;
-				px[3] = alpha;
+				r = color;
+				g = color;
+				b = color;
 			}
 			else if(page.units[x][y].result & UNIT_ITEM)
 			{
 				px[0] = 230;
 				px[1] = 200;
 				px[2] = 230;
-				px[3] = alpha;
 			}
 			else if(page.units[x][y].result & UNIT_MAPPED)
 			{
-				px[0] = 255;
-				px[1] = 240;
-				px[2] = 190;
-				px[3] = alpha;
+				r = 255;
+				g = 240;
+				b = 190;
 			}
 			else
 			{
-				px[0] = 210;
-				px[1] = 230;
-				px[2] = 250;
-				px[3] = 255;
+				r = 210;
+				g = 230;
+				b = 250;
+				alpha = 255;
 			}
+
+			int anti_alpha = 255-alpha;
+			r = (alpha*r + anti_alpha*back_r)/256;
+			g = (alpha*g + anti_alpha*back_g)/256;
+			b = (alpha*b + anti_alpha*back_b)/256;
+
+			if(r < 0) r = 0; else if(r > 255) r = 255;
+			if(g < 0) r = 0; else if(g > 255) g = 255;
+			if(b < 0) r = 0; else if(b > 255) b = 255;
+			px[0] = r;
+			px[1] = g;
+			px[2] = b;
+			px[3] = 255;
 		}
 	}
 
