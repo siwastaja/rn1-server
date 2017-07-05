@@ -109,7 +109,7 @@ Johannes siwa muovi Pussi.
 <input type=button id=zoom_in value="Zoom in">
 <br>
 
-<canvas id="map_canvas" width="800" height="800" style="border:1px solid #000000;"></canvas>
+<canvas id="map_canvas" width="1000" height="800" style="border:1px solid #000000;"></canvas>
 
 </article>
 
@@ -194,7 +194,7 @@ function update_view()
 
 	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
 	socket_di.send(view_blob);
-	ct.clearRect(0, 0, canv_w, canv_h);
+//	ct.clearRect(0, 0, canv_w, canv_h);
 }
 
 function scroll_view(x, y)
@@ -204,6 +204,25 @@ function scroll_view(x, y)
 
 	update_view();
 }
+
+var preview_last_x = 0;
+var preview_last_y = 0;
+
+function preview_scroll_view(x, y)
+{
+	var dx = x - preview_last_x;
+	var dy = y - preview_last_y;
+	preview_last_x = x;
+	preview_last_y = y;
+	if(dx != 0 && dy != 0)
+	{
+		ct.clearRect(0, 0, dx, canv_h);
+		ct.clearRect(0, 0, canv_w, dy);
+		var imageData = ct.getImageData(0, 0, canv_w-dx, canv_h-dy);
+		ct.putImageData(imageData, dx, dy);
+	}
+}
+
 
 function handle_click(xpix, ypix)
 {
@@ -230,6 +249,9 @@ $(function()
 
 	function handleMouseDown(e)
 	{
+		preview_last_x = 0;
+		preview_last_y = 0;
+
 		var rect = canv.getBoundingClientRect();
 		drag_start_x=parseInt(e.clientX-rect.left);
 		drag_start_y=parseInt(e.clientY-rect.top);
@@ -248,12 +270,10 @@ $(function()
 
 			if(drag_x > -5 && drag_x < 5 && drag_y > -5 && drag_y < 5)
 			{
-				document.getElementById("dbg4").textContent = "CLICK: X = " + canMouseX + "  Y = " + canMouseY;
 				handle_click(canMouseX, canMouseY);
 			}
 			else
 			{
-				document.getElementById("dbg4").textContent = "DRAG: X = " + drag_x + "  Y = " + drag_y;
 				scroll_view(drag_x, drag_y);
 			}
 		}
@@ -264,7 +284,6 @@ $(function()
 	function handleMouseOut(e)
 	{
 		handleMouseUp(e);
-//		isDragging=false;
 	}
 
 	function handleMouseMove(e)
@@ -278,7 +297,7 @@ $(function()
 
 		if(isDragging)
 		{
-			document.getElementById("dbg4").textContent = "X = " + drag_x + "  Y = " + drag_y;
+			preview_scroll_view(drag_x, drag_y);
 		}
 	}
 
@@ -292,12 +311,14 @@ $(function()
 function do_zoom_out()
 {
 	mm_per_pixel *= 1.4;
+	ct.clearRect(0, 0, canv_w, canv_h);
 	update_view();
 }
 
 function do_zoom_in()
 {
 	mm_per_pixel *= 0.7;
+	ct.clearRect(0, 0, canv_w, canv_h);
 	update_view();
 }
 
@@ -355,11 +376,9 @@ try {
 
 						console.log("Got png! mm = (" + img_x_mm + " , " + img_y_mm + " ) pix = ( " + img_x + " , " + img_y + " )");
 
-						var c = document.getElementById("map_canvas");
-						var ctx = c.getContext("2d");
 						image.onload = function()
 						{
-							ctx.drawImage(image, img_x, img_y, (256*40)/mm_per_pixel, (256*40)/mm_per_pixel);
+							ct.drawImage(image, img_x, img_y, (256*40)/mm_per_pixel, (256*40)/mm_per_pixel);
 						}
 						break;
 
@@ -403,6 +422,12 @@ try {
 							var backmode = (new DataView(arrayBuffer).getUint8(i*9+3));
 							var linex = (new DataView(arrayBuffer).getInt32(i*9+4, false));
 							var liney = (new DataView(arrayBuffer).getInt32(i*9+8, false));
+							ct.lineWidth = 3;
+							if(backmode > 0)
+								ct.strokeStyle = "red";
+							else
+								ct.strokeStyle = "green";
+
 							ct.lineTo((linex - view_start_x)/mm_per_pixel, (liney - view_start_y)/mm_per_pixel);
 						}
 						ct.stroke();
@@ -432,7 +457,7 @@ try {
 								var c = document.getElementById("map_canvas");
 								var ctx = c.getContext("2d");
 								ctx.fillStyle = "red";
-								ctx.fillRect(dot_x-2,dot_y-2, 4, 4);
+								ctx.fillRect(dot_x-1,dot_y-1, 2, 2);
 							}
 						}
 
