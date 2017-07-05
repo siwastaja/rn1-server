@@ -98,15 +98,16 @@ dbg2: <div id=dbg2>...</div><br>
 dbg3: <div id=dbg3>...</div><br>
 dbg4: <div id=dbg4>...</div><br>
 view: <div id=dbgview>...</div><br>
+STATUS: <div id=status>...</div><br>
 
 Johannes siwa muovi Pussi.
 
 <span id=wsdi_status>Websocket connection not initialized</span>
-<input type=button id=offset value="Reset counter">
+<input type=button id=redraw value="Redraw">
 
 <input type=button id=zoom_out value="Zoom out">
 <input type=button id=zoom_in value="Zoom in">
-
+<br>
 
 <canvas id="map_canvas" width="800" height="800" style="border:1px solid #000000;"></canvas>
 
@@ -114,7 +115,7 @@ Johannes siwa muovi Pussi.
 
 <script nonce="lwscaro">
 
-document.getElementById('offset').onclick = reset;
+document.getElementById('redraw').onclick = redraw;
 document.getElementById('zoom_out').onclick = do_zoom_out;
 document.getElementById('zoom_in').onclick = do_zoom_in;
 
@@ -172,6 +173,10 @@ var mm_per_pixel = 10.0;
 var drag_start_x = 0.0;
 var drag_start_y = 0.0;
 
+var cur_angle = 0;
+var cur_x = 0;
+var cur_y = 0;
+
 function update_view()
 {
 	document.getElementById("dbgview").textContent = "Topleft: ( " + view_start_x + " , " + view_start_y + " )  mm_per_pixel = " + mm_per_pixel;
@@ -200,6 +205,24 @@ function scroll_view(x, y)
 	update_view();
 }
 
+function handle_click(xpix, ypix)
+{
+	ct.fillStyle = "red";
+	ct.fillRect(xpix-5,ypix-5, 10, 10);
+
+	var x_mm = xpix * mm_per_pixel + view_start_x;
+	var y_mm = ypix * mm_per_pixel + view_start_y;
+
+	var buffer = new ArrayBuffer(9);
+
+	new DataView(buffer).setUint8(0, 2);
+	new DataView(buffer).setInt32(1, x_mm, false);
+	new DataView(buffer).setInt32(5, y_mm, false);
+
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+}
+
 
 $(function()
 {
@@ -226,6 +249,7 @@ $(function()
 			if(drag_x > -5 && drag_x < 5 && drag_y > -5 && drag_y < 5)
 			{
 				document.getElementById("dbg4").textContent = "CLICK: X = " + canMouseX + "  Y = " + canMouseY;
+				handle_click(canMouseX, canMouseY);
 			}
 			else
 			{
@@ -308,6 +332,8 @@ try {
 				var view = new Uint8Array(arrayBuffer.slice(0,3));
 				document.getElementById("dbg1").textContent = "Yeesbox!" + view[0] + " " + (view[1]*256+view[2]);
 
+				var pay_size = view[1]*256+view[2];
+
 				switch(view[0])
 				{
 					case 200:
@@ -341,9 +367,9 @@ try {
 					case 130:
 					{
 //							document.getElementById("dbg2").textContent = "recog coords";
-						var cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
-						var cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
-						var cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
+						cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
+						cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
+						cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
 
 						var dot_x = (cur_x - view_start_x) / mm_per_pixel;
 						var dot_y = (cur_y - view_start_y) / mm_per_pixel;
@@ -356,6 +382,30 @@ try {
 						ctx.fillStyle = "green";
 						ctx.fillRect(dot_x-5,dot_y-5, 10, 10);
 
+					}
+					break;
+
+					case 135:
+					{
+						var n_elems = pay_size/9;
+
+						if(n_elems == 0)
+						{
+							document.getElementById("status").textContent = "Sorry, no route found!";
+							break;
+						}
+						document.getElementById("status").textContent = "Following route!";
+
+						ct.beginPath();
+						ct.moveTo((cur_x - view_start_x) / mm_per_pixel, (cur_y - view_start_y) / mm_per_pixel);
+						for(i = 0; i < n_elems; i++)
+						{
+							var backmode = (new DataView(arrayBuffer).getUint8(i*9+3));
+							var linex = (new DataView(arrayBuffer).getInt32(i*9+4, false));
+							var liney = (new DataView(arrayBuffer).getInt32(i*9+8, false));
+							ct.lineTo((linex - view_start_x)/mm_per_pixel, (liney - view_start_y)/mm_per_pixel);
+						}
+						ct.stroke();
 					}
 					break;
 
@@ -466,8 +516,13 @@ try {
 	alert('<p>Error' + exception);  
 }
 
-function reset() {
-	socket_di.send("reset\n");
+//function reset() {
+//	socket_di.send("reset\n");
+//}
+
+function redraw()
+{
+	update_view();
 }
 
 
