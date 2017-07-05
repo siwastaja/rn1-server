@@ -98,23 +98,28 @@ dbg2: <div id=dbg2>...</div><br>
 dbg3: <div id=dbg3>...</div><br>
 dbg4: <div id=dbg4>...</div><br>
 view: <div id=dbgview>...</div><br>
+STATUS: <div id=status>...</div><br>
 
 Johannes siwa muovi Pussi.
 
 <span id=wsdi_status>Websocket connection not initialized</span>
-<input type=button id=offset value="Reset counter">
+<br>
+<input type=button id=charger value="Go to charger">
 
+<br>
+<input type=button id=redraw value="Redraw">
 <input type=button id=zoom_out value="Zoom out">
 <input type=button id=zoom_in value="Zoom in">
+<br>
 
-
-<canvas id="map_canvas" width="800" height="800" style="border:1px solid #000000;"></canvas>
+<canvas id="map_canvas" width="1000" height="800" style="border:1px solid #000000;"></canvas>
 
 </article>
 
 <script nonce="lwscaro">
 
-document.getElementById('offset').onclick = reset;
+document.getElementById('charger').onclick = charger;
+document.getElementById('redraw').onclick = redraw;
 document.getElementById('zoom_out').onclick = do_zoom_out;
 document.getElementById('zoom_in').onclick = do_zoom_in;
 
@@ -172,6 +177,10 @@ var mm_per_pixel = 10.0;
 var drag_start_x = 0.0;
 var drag_start_y = 0.0;
 
+var cur_angle = 0;
+var cur_x = 0;
+var cur_y = 0;
+
 function update_view()
 {
 	document.getElementById("dbgview").textContent = "Topleft: ( " + view_start_x + " , " + view_start_y + " )  mm_per_pixel = " + mm_per_pixel;
@@ -189,7 +198,7 @@ function update_view()
 
 	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
 	socket_di.send(view_blob);
-	ct.clearRect(0, 0, canv_w, canv_h);
+//	ct.clearRect(0, 0, canv_w, canv_h);
 }
 
 function scroll_view(x, y)
@@ -200,6 +209,51 @@ function scroll_view(x, y)
 	update_view();
 }
 
+var preview_last_x = 0;
+var preview_last_y = 0;
+
+function preview_scroll_view(x, y)
+{
+	var dx = x - preview_last_x;
+	var dy = y - preview_last_y;
+	preview_last_x = x;
+	preview_last_y = y;
+	if(dx != 0 && dy != 0)
+	{
+		ct.clearRect(0, 0, dx, canv_h);
+		ct.clearRect(0, 0, canv_w, dy);
+		var imageData = ct.getImageData(0, 0, canv_w-dx, canv_h-dy);
+		ct.putImageData(imageData, dx, dy);
+	}
+}
+
+
+function handle_click(xpix, ypix)
+{
+	ct.fillStyle = "red";
+	ct.fillRect(xpix-5,ypix-5, 10, 10);
+
+	var x_mm = xpix * mm_per_pixel + view_start_x;
+	var y_mm = ypix * mm_per_pixel + view_start_y;
+
+	var buffer = new ArrayBuffer(9);
+
+	new DataView(buffer).setUint8(0, 2);
+	new DataView(buffer).setInt32(1, x_mm, false);
+	new DataView(buffer).setInt32(5, y_mm, false);
+
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+}
+
+function charger()
+{
+	var buffer = new ArrayBuffer(1);
+	new DataView(buffer).setUint8(0, 3);
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+}
+
 
 $(function()
 {
@@ -207,6 +261,9 @@ $(function()
 
 	function handleMouseDown(e)
 	{
+		preview_last_x = 0;
+		preview_last_y = 0;
+
 		var rect = canv.getBoundingClientRect();
 		drag_start_x=parseInt(e.clientX-rect.left);
 		drag_start_y=parseInt(e.clientY-rect.top);
@@ -225,11 +282,10 @@ $(function()
 
 			if(drag_x > -5 && drag_x < 5 && drag_y > -5 && drag_y < 5)
 			{
-				document.getElementById("dbg4").textContent = "CLICK: X = " + canMouseX + "  Y = " + canMouseY;
+				handle_click(canMouseX, canMouseY);
 			}
 			else
 			{
-				document.getElementById("dbg4").textContent = "DRAG: X = " + drag_x + "  Y = " + drag_y;
 				scroll_view(drag_x, drag_y);
 			}
 		}
@@ -240,7 +296,6 @@ $(function()
 	function handleMouseOut(e)
 	{
 		handleMouseUp(e);
-//		isDragging=false;
 	}
 
 	function handleMouseMove(e)
@@ -254,7 +309,7 @@ $(function()
 
 		if(isDragging)
 		{
-			document.getElementById("dbg4").textContent = "X = " + drag_x + "  Y = " + drag_y;
+			preview_scroll_view(drag_x, drag_y);
 		}
 	}
 
@@ -268,12 +323,14 @@ $(function()
 function do_zoom_out()
 {
 	mm_per_pixel *= 1.4;
+	ct.clearRect(0, 0, canv_w, canv_h);
 	update_view();
 }
 
 function do_zoom_in()
 {
 	mm_per_pixel *= 0.7;
+	ct.clearRect(0, 0, canv_w, canv_h);
 	update_view();
 }
 
@@ -291,7 +348,7 @@ if (typeof MozWebSocket != "undefined") {
 try {
 	socket_di.onopen = function() {
 		document.getElementById("wsdi_status").innerHTML =
-			" <b>websocket connection opened</b><br>" +
+			" <b>websocket connection opened</b> " +
 			san(socket_di.extensions);
 	} 
 
@@ -307,6 +364,8 @@ try {
 				var arrayBuffer = this.result;
 				var view = new Uint8Array(arrayBuffer.slice(0,3));
 				document.getElementById("dbg1").textContent = "Yeesbox!" + view[0] + " " + (view[1]*256+view[2]);
+
+				var pay_size = view[1]*256+view[2];
 
 				switch(view[0])
 				{
@@ -329,11 +388,9 @@ try {
 
 						console.log("Got png! mm = (" + img_x_mm + " , " + img_y_mm + " ) pix = ( " + img_x + " , " + img_y + " )");
 
-						var c = document.getElementById("map_canvas");
-						var ctx = c.getContext("2d");
 						image.onload = function()
 						{
-							ctx.drawImage(image, img_x, img_y, (256*40)/mm_per_pixel, (256*40)/mm_per_pixel);
+							ct.drawImage(image, img_x, img_y, (256*40)/mm_per_pixel, (256*40)/mm_per_pixel);
 						}
 						break;
 
@@ -341,9 +398,9 @@ try {
 					case 130:
 					{
 //							document.getElementById("dbg2").textContent = "recog coords";
-						var cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
-						var cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
-						var cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
+						cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
+						cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
+						cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
 
 						var dot_x = (cur_x - view_start_x) / mm_per_pixel;
 						var dot_y = (cur_y - view_start_y) / mm_per_pixel;
@@ -356,6 +413,36 @@ try {
 						ctx.fillStyle = "green";
 						ctx.fillRect(dot_x-5,dot_y-5, 10, 10);
 
+					}
+					break;
+
+					case 135:
+					{
+						var n_elems = pay_size/9;
+
+						if(n_elems == 0)
+						{
+							document.getElementById("status").textContent = "Sorry, no route found!";
+							break;
+						}
+						document.getElementById("status").textContent = "Following route!";
+
+						ct.beginPath();
+						ct.moveTo((cur_x - view_start_x) / mm_per_pixel, (cur_y - view_start_y) / mm_per_pixel);
+						for(i = 0; i < n_elems; i++)
+						{
+							var backmode = (new DataView(arrayBuffer).getUint8(i*9+3));
+							var linex = (new DataView(arrayBuffer).getInt32(i*9+4, false));
+							var liney = (new DataView(arrayBuffer).getInt32(i*9+8, false));
+							ct.lineWidth = 3;
+							if(backmode > 0)
+								ct.strokeStyle = "red";
+							else
+								ct.strokeStyle = "green";
+
+							ct.lineTo((linex - view_start_x)/mm_per_pixel, (liney - view_start_y)/mm_per_pixel);
+							ct.stroke();
+						}
 					}
 					break;
 
@@ -382,7 +469,7 @@ try {
 								var c = document.getElementById("map_canvas");
 								var ctx = c.getContext("2d");
 								ctx.fillStyle = "red";
-								ctx.fillRect(dot_x-2,dot_y-2, 4, 4);
+								ctx.fillRect(dot_x-1,dot_y-1, 2, 2);
 							}
 						}
 
@@ -466,8 +553,13 @@ try {
 	alert('<p>Error' + exception);  
 }
 
-function reset() {
-	socket_di.send("reset\n");
+//function reset() {
+//	socket_di.send("reset\n");
+//}
+
+function redraw()
+{
+	update_view();
 }
 
 
