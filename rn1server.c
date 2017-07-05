@@ -207,12 +207,46 @@ uv_buf_t write_uvbuf;
 static void uv_tcp_write_cb(uv_write_t* req, int status)
 {
 	lwsl_notice("UV TCP WRITE CB status=%d\n", status);
+	free(write_uvbuf.base);
+	write_uvbuf.base = NULL;
 }
 
 static void do_route(int32_t x, int32_t y)
 {
-	write_uvbuf
-	uv_write(&write_req, common_vhd->stream, write_uvbuf, 1, uv_tcp_write_cb);
+	if(write_uvbuf.base)
+	{
+		lwsl_notice("Previous TCP write unfinished.\n");
+		return;
+	}
+
+	const int size = 12;
+	write_uvbuf.base = malloc(size);
+	write_uvbuf.len = size;
+	write_uvbuf.base[0] = 56;
+	write_uvbuf.base[1] = ((size-3)&0xff00)>>8;
+	write_uvbuf.base[2] = (size-3)&0xff;
+	I32TOBUF(x, write_uvbuf.base, 3);
+	I32TOBUF(y, write_uvbuf.base, 7);
+	write_uvbuf.base[11] = 0;
+	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
+}
+
+static void do_charger()
+{
+	if(write_uvbuf.base)
+	{
+		lwsl_notice("Previous TCP write unfinished.\n");
+		return;
+	}
+
+	const int size = 4;
+	write_uvbuf.base = malloc(size);
+	write_uvbuf.len = size;
+	write_uvbuf.base[0] = 57;
+	write_uvbuf.base[1] = ((size-3)&0xff00)>>8;
+	write_uvbuf.base[2] = (size-3)&0xff;
+	write_uvbuf.base[3] = 0;
+	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
 }
 
 static void tcphandler_established(uv_connect_t *conn, int status)
@@ -389,12 +423,17 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 			lwsl_notice("View update: topleft ( %d , %d )  bottomright ( %d , %d)\n", pss->view_start_x, pss->view_start_y, pss->view_end_x, pss->view_end_y);
 			do_send_png();
 		}
-		else if(len == 9 && ((uint8_t*)int[0] == 2)
+		else if(len == 9 && ((uint8_t*)in)[0] == 2)
 		{
 			int32_t dest_x = I32FROMBUF((uint8_t*)in, 1);
 			int32_t dest_y = I32FROMBUF((uint8_t*)in, 5);
 			lwsl_notice("ROUTE DEST: %d, %d\n", dest_x, dest_y);
 			do_route(dest_x, dest_y);
+		}
+		else if(len == 1 && ((uint8_t*)in)[0] == 3)
+		{
+			lwsl_notice("Charger request\n");
+			do_charger();
 		}
 		else
 		{
