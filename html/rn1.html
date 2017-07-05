@@ -103,8 +103,11 @@ STATUS: <div id=status>...</div><br>
 Johannes siwa muovi Pussi.
 
 <span id=wsdi_status>Websocket connection not initialized</span>
-<input type=button id=redraw value="Redraw">
+<br>
+<input type=button id=charger value="Go to charger">
 
+<br>
+<input type=button id=redraw value="Redraw">
 <input type=button id=zoom_out value="Zoom out">
 <input type=button id=zoom_in value="Zoom in">
 <br>
@@ -115,6 +118,7 @@ Johannes siwa muovi Pussi.
 
 <script nonce="lwscaro">
 
+document.getElementById('charger').onclick = charger;
 document.getElementById('redraw').onclick = redraw;
 document.getElementById('zoom_out').onclick = do_zoom_out;
 document.getElementById('zoom_in').onclick = do_zoom_in;
@@ -242,6 +246,14 @@ function handle_click(xpix, ypix)
 	socket_di.send(view_blob);
 }
 
+function charger()
+{
+	var buffer = new ArrayBuffer(1);
+	new DataView(buffer).setUint8(0, 3);
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+}
+
 
 $(function()
 {
@@ -336,7 +348,7 @@ if (typeof MozWebSocket != "undefined") {
 try {
 	socket_di.onopen = function() {
 		document.getElementById("wsdi_status").innerHTML =
-			" <b>websocket connection opened</b><br>" +
+			" <b>websocket connection opened</b> " +
 			san(socket_di.extensions);
 	} 
 
@@ -429,8 +441,8 @@ try {
 								ct.strokeStyle = "green";
 
 							ct.lineTo((linex - view_start_x)/mm_per_pixel, (liney - view_start_y)/mm_per_pixel);
+							ct.stroke();
 						}
-						ct.stroke();
 					}
 					break;
 
