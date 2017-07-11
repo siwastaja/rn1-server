@@ -46,12 +46,21 @@ struct per_session_data__rn1 {
 	int32_t view_end_y;
 };
 
+static int rsync_running = 0;
+
 pid_t my_pid;
-static void run_map_sync()
+static void run_map_rsync()
 {
+	if(rsync_running)
+	{
+		lwsl_notice("rsync still running\n");
+		return;
+	}
+
 	if((my_pid = fork()) == 0)
 	{
-		static char *argv[] = {"/home/hrst/rn1-server/map_sync.sh", NULL};
+		static char *argv[] = {"/bin/bash", "/home/hrst/rn1-server/do_map_sync.sh", NULL};
+//		static char *argv[] = {"sudo", "-u", "hrst", "/home/hrst/rn1-server/map_sync.sh", NULL};
 		if((execve(argv[0], (char **)argv , NULL)) == -1)
 		{
 			lwsl_err("run_map_rsync(): execve failed\n");
@@ -59,16 +68,21 @@ static void run_map_sync()
 	}
 	else
 	{
-		lwsl_err("run_map_rsync(): fork failed\n");
+		rsync_running = 1;
 	}
 }
 
 static int poll_map_rsync()
 {
+	if(!rsync_running)
+		return -998;
+
 	int status = 0;
 	if(waitpid(my_pid , &status , WNOHANG) == 0)
-		return -999999;
+		return -999;
 
+	rsync_running = 0;
+	lwsl_notice("rsync returned %d\n", status);
 	return status;
 }
 
@@ -111,10 +125,19 @@ int msg_ringbuf_wr, msg_ringbuf_rd;
 
 void parse_message()
 {
+	poll_map_rsync();
+
 	int len = ((tcpbuf.b.len_msb<<8) | tcpbuf.b.len_lsb)+3;
 	if(len < 0 || len > 2000)
 	{
 		lwsl_err("parse_message(): illegal len=%d!\n", len);
+		return;
+	}
+
+	if(tcpbuf.b.msgid == 136) // map sync request: don't relay, sync!
+	{
+		lwsl_notice("running map rsync\n");
+		run_map_rsync();
 		return;
 	}
 
@@ -246,6 +269,24 @@ static void do_charger()
 	write_uvbuf.base[1] = ((size-3)&0xff00)>>8;
 	write_uvbuf.base[2] = (size-3)&0xff;
 	write_uvbuf.base[3] = 0;
+	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
+}
+
+static void do_mode(int mode)
+{
+	if(write_uvbuf.base)
+	{
+		lwsl_notice("Previous TCP write unfinished.\n");
+		return;
+	}
+
+	const int size = 4;
+	write_uvbuf.base = malloc(size);
+	write_uvbuf.len = size;
+	write_uvbuf.base[0] = 58;
+	write_uvbuf.base[1] = ((size-3)&0xff00)>>8;
+	write_uvbuf.base[2] = (size-3)&0xff;
+	write_uvbuf.base[3] = mode&0xff;
 	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
 }
 
@@ -434,6 +475,11 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		{
 			lwsl_notice("Charger request\n");
 			do_charger();
+		}
+		else if(len == 2 && ((uint8_t*)in)[0] == 4)
+		{
+			lwsl_notice("Mode request\n");
+			do_mode(((uint8_t*)in)[1]);
 		}
 		else
 		{
