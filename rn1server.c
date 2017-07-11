@@ -147,7 +147,7 @@ void parse_message()
 
 	if(next == msg_ringbuf_rd)
 	{
-		lwsl_notice("ignoring message(%d) due to ringbuf overrun\n", tcpbuf.b.msgid);
+//		lwsl_notice("ignoring message(%d) due to ringbuf overrun\n", tcpbuf.b.msgid);
 		return;
 	}
 
@@ -289,6 +289,25 @@ static void do_mode(int mode)
 	write_uvbuf.base[3] = mode&0xff;
 	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
 }
+
+static void do_manual(int op)
+{
+	if(write_uvbuf.base)
+	{
+		lwsl_notice("Previous TCP write unfinished.\n");
+		return;
+	}
+
+	const int size = 4;
+	write_uvbuf.base = malloc(size);
+	write_uvbuf.len = size;
+	write_uvbuf.base[0] = 59;
+	write_uvbuf.base[1] = ((size-3)&0xff00)>>8;
+	write_uvbuf.base[2] = (size-3)&0xff;
+	write_uvbuf.base[3] = op&0xff;
+	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
+}
+
 
 static void tcphandler_established(uv_connect_t *conn, int status)
 {
@@ -480,6 +499,11 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		{
 			lwsl_notice("Mode request\n");
 			do_mode(((uint8_t*)in)[1]);
+		}
+		else if(len == 2 && ((uint8_t*)in)[0] == 5)
+		{
+			lwsl_notice("Manual request\n");
+			do_manual(((uint8_t*)in)[1]);
 		}
 		else
 		{
