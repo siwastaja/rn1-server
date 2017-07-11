@@ -93,18 +93,31 @@
 <article>
 
 ws_url: <div id=ws_url>...</div><br>
-dbg1: <div id=dbg1>...</div><br>
-dbg2: <div id=dbg2>...</div><br>
-dbg3: <div id=dbg3>...</div><br>
-dbg4: <div id=dbg4>...</div><br>
-view: <div id=dbgview>...</div><br>
-STATUS: <div id=status>...</div><br>
-
-Johannes siwa muovi Pussi.
 
 <span id=wsdi_status>Websocket connection not initialized</span>
 <br>
+
+<input type=button id=mode0 value="Mode0: user control, NO localization/mapping"> 
+<br>
+<input type=button id=mode1 value="Mode1: user control, with localization/mapping"> Normal operation mode. Stops autonomous operations.
+<br>
+<input type=button id=mode2 value="Mode2: autonomous mapping, skip compass">
+<br>
+<input type=button id=mode3 value="Mode3: autonomous mapping, start from compass"> Use this to localize the robot on the map. Let it run for a while, until localized.
+<br>
+<input type=button id=mode4 value="Mode4: DaijuMode">
+<br>
+<input type=button id=mode5 value="Mode5: Motors disabled, with localization/mapping"> Lets you move the robot freely
+<br>
+<input type=button id=mode6 value="Mode6: Motors disabled, NO localization/mapping"> Does not mess up the map if the robot is wrongly localized
+<br>
+<input type=button id=mode7 value="Program charger location"> Click this after you have put the robot IN the charger.
+<br>
+
+BATTERY STATUS: <div id=bat_status>...</div> ROUTE STATUS: <div id=status>...</div><br>
+
 <input type=button id=charger value="Go to charger">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<input type=button id=estop value="STOP!!!">
 
 <br>
 <input type=button id=redraw value="Redraw">
@@ -114,11 +127,40 @@ Johannes siwa muovi Pussi.
 
 <canvas id="map_canvas" width="1000" height="800" style="border:1px solid #000000;"></canvas>
 
+<br>
+<table border="1">
+<tr><td><center><big><b>Manual control</b></big></center></td></tr>
+<tr><td><center><small>For resolving problems, FWD/BACK 10 cm per click, LEFT/RIGHT 10 deg per click.</small></center></td></tr>
+<tr><td><center>
+<table border="0">
+<tr><td></td><td><input type=button id=manu_fwd value="FWD"></td><td></td></tr>
+<tr><td><input type=button id=manu_left value="LEFT"></td><td></td><td><input type=button id=manu_right value="RIGHT"></td></tr>
+<tr><td></td><td><input type=button id=manu_back value="BACK"></td><td></td></tr>
+</table></center>
+</td></tr>
+</table>
+
 </article>
 
 <script nonce="lwscaro">
 
 document.getElementById('charger').onclick = charger;
+document.getElementById('mode0').onclick = mode0;
+document.getElementById('mode1').onclick = mode1;
+document.getElementById('mode2').onclick = mode2;
+document.getElementById('mode3').onclick = mode3;
+document.getElementById('mode4').onclick = mode4;
+document.getElementById('mode5').onclick = mode5;
+document.getElementById('mode6').onclick = mode6;
+document.getElementById('mode7').onclick = mode7;
+document.getElementById('estop').onclick = mode5;
+
+document.getElementById('manu_fwd').onclick = manu_fwd;
+document.getElementById('manu_back').onclick = manu_back;
+document.getElementById('manu_left').onclick = manu_left;
+document.getElementById('manu_right').onclick = manu_right;
+
+
 document.getElementById('redraw').onclick = redraw;
 document.getElementById('zoom_out').onclick = do_zoom_out;
 document.getElementById('zoom_in').onclick = do_zoom_in;
@@ -183,8 +225,6 @@ var cur_y = 0;
 
 function update_view()
 {
-	document.getElementById("dbgview").textContent = "Topleft: ( " + view_start_x + " , " + view_start_y + " )  mm_per_pixel = " + mm_per_pixel;
-
 	var view_end_x = view_start_x + canv_w*mm_per_pixel;
 	var view_end_y = view_start_y + canv_h*mm_per_pixel;
 
@@ -255,9 +295,43 @@ function charger()
 }
 
 
+function mode0() { mode(0); }
+function mode1() { mode(1); }
+function mode2() { mode(2); }
+function mode3() { mode(3); }
+function mode4() { mode(4); }
+function mode5() { mode(5); }
+function mode6() { mode(6); }
+function mode7() { mode(7); }
+
+function manu_fwd() { manu(10); }
+function manu_back() { manu(11); }
+function manu_left() { manu(12); }
+function manu_right() { manu(13); }
+
+function mode(m)
+{
+	var buffer = new ArrayBuffer(2);
+	new DataView(buffer).setUint8(0, 4);
+	new DataView(buffer).setUint8(1, m);
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+}
+
+function manu(m)
+{
+	var buffer = new ArrayBuffer(2);
+	new DataView(buffer).setUint8(0, 5);
+	new DataView(buffer).setUint8(1, m);
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+}
+
+
+var isDragging=false;
+
 $(function()
 {
-	var isDragging=false;
 
 	function handleMouseDown(e)
 	{
@@ -356,14 +430,11 @@ try {
 	{
 		if(msg.data instanceof Blob)
 		{
-			document.getElementById("dbg1").textContent = "Yes.";
-
 			var fileReader = new FileReader();
 			fileReader.onload = function()
 			{ 
 				var arrayBuffer = this.result;
 				var view = new Uint8Array(arrayBuffer.slice(0,3));
-				document.getElementById("dbg1").textContent = "Yeesbox!" + view[0] + " " + (view[1]*256+view[2]);
 
 				var pay_size = view[1]*256+view[2];
 
@@ -371,7 +442,6 @@ try {
 				{
 					case 200:
 					{
-						document.getElementById("dbg2").textContent = "Got png!";
 						var image = new Image();
 						image.src = URL.createObjectURL(msg.data.slice(10, msg.data.size, "image/png"));
 						var img_x_mm = (new DataView(arrayBuffer).getInt32(1, false));
@@ -384,10 +454,6 @@ try {
 						var img_x = (img_x_mm - view_start_x) / mm_per_pixel;
 						var img_y = (img_y_mm - view_start_y) / mm_per_pixel;
 
-						//document.getElementById("dbg2").textContent = "Got png! mm = (" + img_x_mm + " , " + img_y_mm + " ) pix = ( " + img_x + " , " + img_y + " )";
-
-						console.log("Got png! mm = (" + img_x_mm + " , " + img_y_mm + " ) pix = ( " + img_x + " , " + img_y + " )");
-
 						image.onload = function()
 						{
 							ct.drawImage(image, img_x, img_y, (256*40)/mm_per_pixel, (256*40)/mm_per_pixel);
@@ -397,16 +463,14 @@ try {
 					}
 					case 130:
 					{
-//							document.getElementById("dbg2").textContent = "recog coords";
 						cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
 						cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
 						cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
 
+						if(isDragging) break;
+
 						var dot_x = (cur_x - view_start_x) / mm_per_pixel;
 						var dot_y = (cur_y - view_start_y) / mm_per_pixel;
-
-
-//							document.getElementById("dbg2").textContent = "ANG = " + cur_angle + " X = " + cur_x + " Y = " + cur_y;
 
 						var c = document.getElementById("map_canvas");
 						var ctx = c.getContext("2d");
@@ -416,8 +480,27 @@ try {
 					}
 					break;
 
+					case 134:
+					{
+						var flags = (new DataView(arrayBuffer).getUint8(3));
+
+						var str = "";
+						if(flags & 1)
+							str += " CHARGING ";
+						if(flags & 2)
+							str += " CHARGE_FINISHED ";
+
+						var volts = (new DataView(arrayBuffer).getUint16(4, false));
+						var percentage = (new DataView(arrayBuffer).getUint8(6));
+
+						document.getElementById("bat_status").textContent = volts/1000 + "V  " + percentage + "%  " + str;
+					}
+					break;
+
 					case 135:
 					{
+						if(isDragging) break;
+
 						var n_elems = pay_size/9;
 
 						if(n_elems == 0)
@@ -442,17 +525,22 @@ try {
 
 							ct.lineTo((linex - view_start_x)/mm_per_pixel, (liney - view_start_y)/mm_per_pixel);
 							ct.stroke();
+							if(i < n_elems-1)
+							{
+								ct.beginPath();
+								ct.moveTo((linex - view_start_x)/mm_per_pixel, (liney - view_start_y)/mm_per_pixel);
+							}
 						}
 					}
 					break;
 
 					case 131:
 					{
+						if(isDragging) break;
+
 						var lidar_robot_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
 						var lidar_robot_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
 						var lidar_robot_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
-
-						document.getElementById("dbg3").textContent = "ANG = " + lidar_robot_angle + " X = " + lidar_robot_x + " Y = " + lidar_robot_y;
 
 						for(i = 0; i < 180; i++)
 						{
@@ -479,7 +567,6 @@ try {
 
 					default:
 					{
-//						document.getElementById("dbg2").textContent = "unrecognized: " + view[0];
 					}
 
 				}
