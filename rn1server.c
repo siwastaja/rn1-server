@@ -157,6 +157,30 @@ void parse_message()
 	msg_ringbuf_wr = next;
 }
 
+static void tcphandler_established(uv_connect_t *conn, int status);
+
+static void do_connect()
+{
+	uv_tcp_init(lws_uv_getloop(common_vhd->context, 0), &common_vhd->client);
+	struct sockaddr_in dest;
+	uv_ip4_addr("192.168.88.118", 22222, &dest);
+	uv_tcp_connect(&common_vhd->conn, &common_vhd->client, (const struct sockaddr*)&dest, tcphandler_established);
+	lwsl_notice("TCP connection requested...\n");
+}
+
+static void uv_timeout_cb_rn1(uv_timer_t *w)
+{
+	do_connect();
+}
+
+static void tcphandler_close(uv_handle_t *conn)
+{
+	lwsl_notice("tcphandler_close()\n");
+	uv_timer_start(&common_vhd->timeout_watcher,
+		       uv_timeout_cb_rn1, 30000, 0);
+}
+
+
 void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
 {
 	if(nread >= 0)
@@ -216,8 +240,8 @@ void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
 	}
 	else // EOF
 	{
-		lwsl_notice("Got EOF!\n");
-//		uv_close((uv_handle_t*)tcp, on_close);
+		lwsl_notice("Got EOF (no connection to robot)!\n");
+		uv_close((uv_handle_t*)tcp, tcphandler_close);
 	}
 
 	if(buf->base)
@@ -311,19 +335,11 @@ static void do_manual(int op)
 
 static void tcphandler_established(uv_connect_t *conn, int status)
 {
-	lwsl_notice("Connection to the robot established!\n");
+	lwsl_notice("Connection to the robot established?\n");
 	struct per_vhost_data__rn1 *vhd = lws_container_of(conn,
 			struct per_vhost_data__rn1, conn);
 	vhd->stream = conn->handle;
 	uv_read_start(vhd->stream, alloc_cb, tcphandler_read);
-}
-
-
-static void uv_timeout_cb_rn1(uv_timer_t *w)
-{
-	struct per_vhost_data__rn1 *vhd = lws_container_of(w,
-			struct per_vhost_data__rn1, timeout_watcher);
-	lws_callback_on_writable_all_protocol_vhost(vhd->vhost, vhd->protocol);
 }
 
 static int png_send_state = 0;
@@ -354,25 +370,17 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		vhd->protocol = lws_get_protocol(wsi);
 		vhd->vhost = lws_get_vhost(wsi);
 
-		uv_tcp_init(lws_uv_getloop(vhd->context, 0), &vhd->client);
 		common_vhd = vhd;
 		int i;
 		for(i = 0; i < MSG_RINGBUF_LEN; i++)
 		{
 			latest_msgs[i] = &internal_latest_msgs[i][LWS_PRE];
 		}
-		struct sockaddr_in dest;
-		uv_ip4_addr("192.168.88.118", 22222, &dest);
 
-		uv_tcp_connect(&vhd->conn, &vhd->client, (const struct sockaddr*)&dest, tcphandler_established);
+		uv_timer_init(lws_uv_getloop(vhd->context, 0),
+			      &vhd->timeout_watcher);
 
-		lwsl_notice("TCP connection requested...\n");
-
-//		uv_timer_init(lws_uv_getloop(vhd->context, 0),
-//			      &vhd->timeout_watcher);
-//		uv_timer_start(&vhd->timeout_watcher,
-//			       uv_timeout_cb_rn1, DUMB_PERIOD, DUMB_PERIOD);
-
+		do_connect();
 		break;
 
 	case LWS_CALLBACK_PROTOCOL_DESTROY:
