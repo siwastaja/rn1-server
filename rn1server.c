@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
+#include <uv.h>
 
 #define I32TOBUF(i_, b_, s_) {(b_)[(s_)] = ((i_)>>24)&0xff; (b_)[(s_)+1] = ((i_)>>16)&0xff; (b_)[(s_)+2] = ((i_)>>8)&0xff; (b_)[(s_)+3] = ((i_)>>0)&0xff; }
 #define I16TOBUF(i_, b_, s_) {(b_)[(s_)] = ((i_)>>8)&0xff; (b_)[(s_)+1] = ((i_)>>0)&0xff; }
@@ -15,7 +16,6 @@
 #define MAP_W 256
 #define MAP_MIDDLE_PAGE (MAP_W/2)
 #define MAP_MIDDLE_UNIT (MAP_PAGE_W * MAP_MIDDLE_PAGE)
-
 
 #if !defined (LWS_PLUGIN_STATIC)
 #define LWS_DLL
@@ -59,7 +59,7 @@ static void run_map_rsync()
 
 	if((my_pid = fork()) == 0)
 	{
-		static char *argv[] = {"/bin/bash", "/home/hrst/rn1-server/do_map_sync.sh", NULL};
+		static char *argv[] = {"/bin/bash", "/home/hrst/rn1-server/do_map_sync.sh", "proto5", NULL};
 //		static char *argv[] = {"sudo", "-u", "hrst", "/home/hrst/rn1-server/map_sync.sh", NULL};
 		if((execve(argv[0], (char **)argv , NULL)) == -1)
 		{
@@ -162,6 +162,7 @@ static void tcphandler_established(uv_connect_t *conn, int status);
 static void do_connect()
 {
 	uv_tcp_init(lws_uv_getloop(common_vhd->context, 0), &common_vhd->client);
+//	uv_tcp_init(uv_default_loop(), &common_vhd->client);
 	struct sockaddr_in dest;
 	uv_ip4_addr("192.168.88.118", 22222, &dest);
 	uv_tcp_connect(&common_vhd->conn, &common_vhd->client, (const struct sockaddr*)&dest, tcphandler_established);
@@ -332,6 +333,28 @@ static void do_manual(int op)
 	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
 }
 
+#define RESTART_MODE_RESTART	1
+#define RESTART_MODE_QUIT 	5
+#define RESTART_MODE_REFLASH	10
+static void ask_restart(int restart_mode)
+{
+	if(write_uvbuf.base)
+	{
+		lwsl_notice("Previous TCP write unfinished.\n");
+		return;
+	}
+
+	const int size = 3+4+4;
+	write_uvbuf.base = malloc(size);
+	write_uvbuf.len = size;
+	write_uvbuf.base[0] = 62;
+	write_uvbuf.base[1] = ((size-3)&0xff00)>>8;
+	write_uvbuf.base[2] = (size-3)&0xff;
+	I32TOBUF(0x12345678, write_uvbuf.base, 3);
+	I32TOBUF(restart_mode, write_uvbuf.base, 7);
+	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
+}
+
 
 static void tcphandler_established(uv_connect_t *conn, int status)
 {
@@ -346,6 +369,7 @@ static int png_send_state = 0;
 static void do_send_png()
 {
 	png_send_state = 1;
+	request_write_callback();
 }
 
 static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
@@ -377,8 +401,8 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 			latest_msgs[i] = &internal_latest_msgs[i][LWS_PRE];
 		}
 
-		uv_timer_init(lws_uv_getloop(vhd->context, 0),
-			      &vhd->timeout_watcher);
+//		uv_timer_init(uv_default_loop(), &vhd->timeout_watcher);
+		uv_timer_init(lws_uv_getloop(vhd->context, 0), &vhd->timeout_watcher);
 
 		do_connect();
 		break;
@@ -400,9 +424,8 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 
 	case LWS_CALLBACK_SERVER_WRITEABLE:
 	{
-//		lwsl_notice("                  got write callback\n");
+	//	lwsl_notice("                  got write callback\n");
 
-//		send_png++;
 
 		static int xpage_s;
 		static int ypage_s;
@@ -411,15 +434,18 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 
 		static int xx, yy;
 
-		if(png_send_state == 0)
+		if(png_send_state == 0) // just relay data from robot, emptying the fifo
 		{
-			lws_write(wsi, latest_msgs[msg_ringbuf_rd], latest_msg_lens[msg_ringbuf_rd], LWS_WRITE_BINARY);
-
-			msg_ringbuf_rd++; if(msg_ringbuf_rd >= MSG_RINGBUF_LEN) msg_ringbuf_rd = 0;
-			if(msg_ringbuf_wr != msg_ringbuf_rd)
+			if(msg_ringbuf_rd != msg_ringbuf_wr) // there is something to relay
 			{
-				request_write_callback();
-	//			lwsl_notice("sending more, rd=%d wr=%d\n", msg_ringbuf_wr, msg_ringbuf_rd);
+				lws_write(wsi, latest_msgs[msg_ringbuf_rd], latest_msg_lens[msg_ringbuf_rd], LWS_WRITE_BINARY);
+
+				msg_ringbuf_rd++; if(msg_ringbuf_rd >= MSG_RINGBUF_LEN) msg_ringbuf_rd = 0;
+				if(msg_ringbuf_wr != msg_ringbuf_rd) // there is moar in the fifo - request new write callback
+				{
+					request_write_callback();
+		//			lwsl_notice("sending more, rd=%d wr=%d\n", msg_ringbuf_wr, msg_ringbuf_rd);
+				}
 			}
 		}
 
@@ -512,6 +538,11 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		{
 			lwsl_notice("Manual request\n");
 			do_manual(((uint8_t*)in)[1]);
+		}
+		else if(len == 2 && ((uint8_t*)in)[0] == 6)
+		{
+			lwsl_notice("Restart request\n");
+			ask_restart(((uint8_t*)in)[1]);
 		}
 		else
 		{

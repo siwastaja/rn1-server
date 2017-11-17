@@ -1,31 +1,44 @@
+/*
+
+	Compiling:
+
+sudo apt-get install libpng-dev
+gcc map2png.c -o map2png -lpng -lm
+	
+
+*/
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <png.h>
 #include <errno.h>
-
+#include <math.h>
 
 #define UNIT_FREE	0
-#define UNIT_ITEM	(1<<0)	// Small obstacle, detected by sonars or bumping into it
-#define UNIT_WALL	(1<<1)	// Obstacle seen by the lidar.
-#define UNIT_DO_NOT_REMOVE_BY_LIDAR (1<<2)
-#define UNIT_DBG	(1<<6)
-#define UNIT_MAPPED		 (1<<7)	// We have seen this area.
+#define UNIT_ITEM           (1<<0)	// Small obstacle, detected by sonars or bumping into it
+#define UNIT_WALL           (1<<1)	// Obstacle seen by the lidar.
+#define UNIT_INVISIBLE_WALL (1<<2)  // Only found out by collision
+#define UNIT_3D_WALL        (1<<3)  // Wall seen by 3DTOF, can't be removed by lidar.
+#define UNIT_DROP           (1<<4)
+#define UNIT_DBG            (1<<6)
+#define UNIT_MAPPED         (1<<7)  // We have seen this area.
 
 #define CONSTRAINT_FORBIDDEN 	(1<<0)	// "Don't go here" unit
 
 typedef struct __attribute__ ((packed))
 {
-	uint8_t result;	 	// Mapping result decided based on all available data.
-	uint8_t latest;		// Mapping result based on last scan.
+	uint8_t result;   	// Mapping result decided based on all available data.
+	uint8_t latest;  	// Mapping result based on last scan.
 
-	uint16_t timestamp;	// Latest time scanned
+	uint8_t timestamp;	// Latest time scanned
+	uint8_t num_visited;    // Incremented when lidar is mapped with this robot coord. Saturated at 255.
 
-	uint8_t num_seen;		// Number of times mapped. Saturated at 255.
-	uint8_t num_obstacles;	// "is an obstacle" counter. Every time mapped, ++ if obstacle, -- if not. Saturated at 255.
+	uint8_t num_seen;  	// Number of times mapped. Saturated at 255.
+	uint8_t num_obstacles;  // "is an obstacle" BY LIDAR counter. Every time mapped, ++ if obstacle, -- if not. Saturated at 255.
 
 	uint8_t constraints;
-	uint8_t reserved;
+	uint8_t num_3d_obstacles; // ++ if 3D_WALL, DROP, or ITEM. Set to 0 if those are removed.
 } map_unit_t;
 
 #define MAP_PAGE_W 256
@@ -37,7 +50,7 @@ typedef struct
 
 map_page_t page;
 
-#define WALL_LEVEL(i) ((int)(i).num_obstacles*4)
+#define WALL_LEVEL(i) ((int)(i).num_obstacles*2)
 
 int main(int argc, char** argv)
 {
@@ -93,44 +106,98 @@ int main(int argc, char** argv)
 		{
 			png_bytep px = &(row[x * 4]);
 
-			int alpha = (30*(int)page.units[x][y].num_seen)/3 + (255/3);
-			if(alpha > 255) alpha=255;
+			const int back_r = 230, back_g = 230, back_b = 230;
+			int r = 0, g = 0, b = 0, alpha = 0;
 
-			int back_r = 170, back_g = 200, back_b = 230;
-
-			int r = 0, g = 0, b = 0;
-			if(page.units[x][y].num_obstacles)
-			{
-				int lvl = WALL_LEVEL(page.units[x][y]);
-				if(lvl > 140) lvl = 140;
-				int color = 140 - lvl;
-				if(!(page.units[x][y].result & UNIT_WALL))
-				{
-					color = 255;
-				}
-
-				r = color;
-				g = color;
-				b = color;
-			}
-			else if(page.units[x][y].result & UNIT_ITEM)
-			{
-				px[0] = 230;
-				px[1] = 200;
-				px[2] = 230;
-			}
-			else if(page.units[x][y].result & UNIT_MAPPED)
+			if(page.units[x][y].constraints & CONSTRAINT_FORBIDDEN)
 			{
 				r = 255;
-				g = 240;
+				g = 110;
 				b = 190;
+				alpha = 255;
 			}
 			else
 			{
-				r = 210;
-				g = 230;
-				b = 250;
-				alpha = 255;
+				alpha = (3*(int)page.units[x][y].num_seen) + (255/4);
+				if(alpha > 255) alpha=255;
+				if(page.units[x][y].result & UNIT_DBG)
+				{
+					r = 255;
+					g = 255;
+					b = 0;
+					alpha = 255;
+				}
+				else if(page.units[x][y].result & UNIT_ITEM)
+				{
+					r = 0;
+					g = 0;
+					b = 255;
+					alpha = 255;
+				}
+				else if(page.units[x][y].result & UNIT_INVISIBLE_WALL)
+				{
+					r = 200;
+					g = 0;
+					b = 0;
+					alpha = 255; //alpha;
+				}
+				else if(page.units[x][y].num_obstacles)
+				{
+					int lvl = WALL_LEVEL(page.units[x][y]);
+					if(lvl > 170) lvl = 170;
+					int color = 170 - lvl;
+					if(!(page.units[x][y].result & UNIT_WALL))
+					{
+						color = 255;
+					}
+
+					r = color;
+					g = color;
+					b = color;
+					alpha = alpha;
+				}
+				else if(page.units[x][y].result & UNIT_MAPPED)
+				{
+					r = 255;
+					g = 240 - sqrt(page.units[x][y].num_visited*150);
+					b = 190;
+					alpha = alpha;
+				}
+				else
+				{
+					r = 230;
+					g = 230;
+					b = 230;
+					alpha = 255;
+				}
+
+				if(!(page.units[x][y].result & UNIT_INVISIBLE_WALL))
+				{
+					if(page.units[x][y].result & UNIT_3D_WALL)
+					{
+						r >>= 1;
+						g >>= 0;
+						b >>= 1;
+						int a = alpha<<1; if(a>255) a=255;
+						alpha = a;
+					}
+					else if(page.units[x][y].result & UNIT_DROP)
+					{
+						r >>= 0;
+						g >>= 1;
+						b >>= 0;
+						int a = alpha<<1; if(a>255) a=255;
+						alpha = a;
+					}
+					else if(page.units[x][y].result & UNIT_ITEM)
+					{
+						r >>= 0;
+						g >>= 0;
+						b >>= 2;
+						int a = alpha<<1; if(a>255) a=255;
+						alpha = a;
+					}
+				}
 			}
 
 			int anti_alpha = 255-alpha;
