@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L // getline()
+
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -39,14 +41,28 @@ struct per_vhost_data__rn1 {
 
 struct per_vhost_data__rn1 *common_vhd;
 
-struct per_session_data__rn1 {
-	int32_t view_start_x;
-	int32_t view_start_y;
-	int32_t view_end_x;
-	int32_t view_end_y;
+struct per_session_data__rn1
+{
+	// Page indexes of the current view area
+	int view_start_x;
+	int view_start_y;
+	int view_end_x;
+	int view_end_y;
+
+	int do_send_map;
+	// which page to send:
+	unsigned int view_xx;
+	unsigned int view_yy;
+
+	uint8_t map_page_status[256*256];
 };
 
 static int rsync_running = 0;
+
+#define SERVER_DIR "/home/hrst/rn1-server"
+const uint32_t accepted_robot = 0xacdcabba;
+const uint32_t accepted_world = 0;
+
 
 pid_t my_pid;
 static void run_map_rsync()
@@ -59,8 +75,7 @@ static void run_map_rsync()
 
 	if((my_pid = fork()) == 0)
 	{
-		static char *argv[] = {"/bin/bash", "/home/hrst/rn1-server/do_map_sync.sh", "proto5", NULL};
-//		static char *argv[] = {"sudo", "-u", "hrst", "/home/hrst/rn1-server/map_sync.sh", NULL};
+		static char *argv[] = {"/bin/bash", SERVER_DIR "/do_map_sync.sh", "proto5", NULL};
 		if((execve(argv[0], (char **)argv , NULL)) == -1)
 		{
 			lwsl_err("run_map_rsync(): execve failed\n");
@@ -70,6 +85,47 @@ static void run_map_rsync()
 	{
 		rsync_running = 1;
 	}
+}
+
+
+uint8_t updated_pages[256*256];
+
+static void update_map_page_lists()
+{
+	FILE *f = fopen(SERVER_DIR "/synced_maps.txt", "r");
+	if(!f)
+	{
+		lwsl_notice("Warning: synced_maps.txt not found\n");
+		return;
+	}
+
+	char line[2000];
+	memset(updated_pages, 0, 256*256);
+	int updates = 0;
+	while(fgets(line, 1998, f))
+	{
+		lwsl_notice("synced_maps: processing line: %s\n", line);
+
+		uint32_t robot_id, world_id;
+		unsigned int pagex, pagey;
+
+		if(sscanf(line, "%08x_%u_%u_%u", &robot_id, &world_id, &pagex, &pagey) == 4)
+		{
+			lwsl_notice("--> robot=%08x world=%08x px=%u py=%u\n", robot_id, world_id, pagex, pagey);
+			if(robot_id == accepted_robot && world_id == accepted_world && pagex < 256 && pagey < 256)
+			{
+				updated_pages[pagey*256+pagex] = 1;
+				updates++;
+			}
+		}
+	}
+
+	if(updates > 0)
+	{
+		lwsl_notice("--> %u updates: request callbacks.\n", updates);
+		lws_callback_all_protocol_vhost_args(common_vhd->vhost, common_vhd->protocol, LWS_CALLBACK_USER, NULL, 0);
+	}
+
 }
 
 static int poll_map_rsync()
@@ -82,7 +138,14 @@ static int poll_map_rsync()
 		return -999;
 
 	rsync_running = 0;
+	status >>= 8; // conversion to actual value.
 	lwsl_notice("rsync returned %d\n", status);
+
+	if(status == 123)
+	{
+		update_map_page_lists();
+	}
+
 	return status;
 }
 
@@ -162,7 +225,6 @@ static void tcphandler_established(uv_connect_t *conn, int status);
 static void do_connect()
 {
 	uv_tcp_init(lws_uv_getloop(common_vhd->context, 0), &common_vhd->client);
-//	uv_tcp_init(uv_default_loop(), &common_vhd->client);
 	struct sockaddr_in dest;
 	uv_ip4_addr("192.168.88.118", 22222, &dest);
 	uv_tcp_connect(&common_vhd->conn, &common_vhd->client, (const struct sockaddr*)&dest, tcphandler_established);
@@ -416,104 +478,146 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		break;
 
 	case LWS_CALLBACK_ESTABLISHED:
-		pss->view_start_x = -100;
-		pss->view_start_y = -100;
-		pss->view_end_x = 100;
-		pss->view_end_y = 100;
+		memset(pss->map_page_status, 1, 256*256);
+		pss->view_start_x = MAP_MIDDLE_PAGE-1;
+		pss->view_start_y = MAP_MIDDLE_PAGE-1;
+		pss->view_end_x = MAP_MIDDLE_PAGE+1;
+		pss->view_end_y = MAP_MIDDLE_PAGE+1;
 		break;
 
 	case LWS_CALLBACK_SERVER_WRITEABLE:
 	{
 	//	lwsl_notice("                  got write callback\n");
 
-
-		static int xpage_s;
-		static int ypage_s;
-		static int xpage_e;
-		static int ypage_e;
-
-		static int xx, yy;
-
-		if(png_send_state == 0) // just relay data from robot, emptying the fifo
+		if(pss->do_send_map)
 		{
-			if(msg_ringbuf_rd != msg_ringbuf_wr) // there is something to relay
+			pss->do_send_map = 0;
+			if(pss->view_xx > 255 || pss->view_yy > 255)
 			{
-				lws_write(wsi, latest_msgs[msg_ringbuf_rd], latest_msg_lens[msg_ringbuf_rd], LWS_WRITE_BINARY);
-
-				msg_ringbuf_rd++; if(msg_ringbuf_rd >= MSG_RINGBUF_LEN) msg_ringbuf_rd = 0;
-				if(msg_ringbuf_wr != msg_ringbuf_rd) // there is moar in the fifo - request new write callback
-				{
-					request_write_callback();
-		//			lwsl_notice("sending more, rd=%d wr=%d\n", msg_ringbuf_wr, msg_ringbuf_rd);
-				}
-			}
-		}
-
-		if(png_send_state == 1)
-		{
-			xpage_s = (pss->view_start_x/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
-			ypage_s = (pss->view_start_y/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
-			xpage_e = (pss->view_end_x/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
-			ypage_e = (pss->view_end_y/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
-			xx = xpage_s;
-			yy = ypage_s;
-			png_send_state++;
-		}
-		if(png_send_state == 2)
-		{
-			char fname[1000];
-			snprintf(fname, 999, "/home/hrst/rn1-server/acdcabba_0_%u_%u.map.png", xx, yy);
-			FILE *f_png = fopen(fname, "rb");
-			if(!f_png)
-			{
-//				if(errno != ENOENT)
-					lwsl_notice("err %d opening map file\n", errno);
+				lwsl_notice("illegal view_xx, view_yy\n");
 			}
 			else
 			{
-				uint8_t pngdata_internal[LWS_PRE + 100000];
-				uint8_t *pngdata = &pngdata_internal[LWS_PRE];
-				pngdata[0] = 200; // map PNG message type id.
-				int x = (xx*MAP_PAGE_W - MAP_MIDDLE_UNIT)*MAP_UNIT_W;
-				int y = (yy*MAP_PAGE_W - MAP_MIDDLE_UNIT)*MAP_UNIT_W;
-				lwsl_notice("Sending png map page ( %d , %d ), start mm coords ( %d , %d )\n", xx, yy, x, y);
-				I32TOBUF(x, pngdata, 1);
-				I32TOBUF(y, pngdata, 5);
-				pngdata[9] = 1;
-				int len = fread(&pngdata[10], 1, 99982, f_png);
-				if(len < 100 || len > 99980)
+				pss->map_page_status[pss->view_yy*256+pss->view_xx] = 0;
+
+				char fname[1000];
+				snprintf(fname, 999, SERVER_DIR "/acdcabba_0_%u_%u.map.png", pss->view_xx, pss->view_yy);
+				FILE *f_png = fopen(fname, "rb");
+				if(!f_png)
 				{
-					lwsl_notice("Illegal png file.\n");
+	//				if(errno != ENOENT)
+						lwsl_notice("err %d opening map file %s\n", errno, fname);
 				}
 				else
 				{
-					lwsl_notice("Sending png, len=%d\n", len);
-					lws_write(wsi, pngdata, len+10, LWS_WRITE_BINARY);
-					if(xx < xpage_e && yy < ypage_e) request_write_callback(); // to send more images
+					uint8_t pngdata_internal[LWS_PRE + 100000];
+					uint8_t *pngdata = &pngdata_internal[LWS_PRE];
+					pngdata[0] = 200; // map PNG message type id.
+					int x = (pss->view_xx*MAP_PAGE_W - MAP_MIDDLE_UNIT)*MAP_UNIT_W;
+					int y = (pss->view_yy*MAP_PAGE_W - MAP_MIDDLE_UNIT)*MAP_UNIT_W;
+					lwsl_notice("Sending png map page ( %d , %d ), start mm coords ( %d , %d )\n", pss->view_xx, pss->view_yy, x, y);
+					I32TOBUF(x, pngdata, 1);
+					I32TOBUF(y, pngdata, 5);
+					pngdata[9] = 1;
+					int len = fread(&pngdata[10], 1, 99982, f_png);
+					if(len < 100 || len > 99980)
+					{
+						lwsl_notice("Illegal png file.\n");
+					}
+					else
+					{
+						lwsl_notice("Sending png, len=%d\n", len);
+						lws_write(wsi, pngdata, len+10, LWS_WRITE_BINARY);
+						// Send more map pages if necessary:
+						int startx = pss->view_start_x-1;
+						int starty = pss->view_start_y-1;
+						int endx = pss->view_end_x+1;
+						int endy = pss->view_end_y+1;
+						if(startx < 0) startx = 0; else if(startx > 255) startx = 255;
+						if(starty < 0) starty = 0; else if(starty > 255) starty = 255;
+						if(endx < 0) endx = 0; else if(endx > 255) endx = 255;
+						if(endy < 0) endy = 0; else if(endy > 255) endy = 255;
+						for(int yy = starty; yy < endy; yy++)
+						{
+							for(int xx = startx; xx < endx; xx++)
+							{
+								if(pss->map_page_status[yy*256+xx])
+								{
+									pss->do_send_map = 1;
+									pss->view_xx = xx;
+									pss->view_yy = yy;
+									request_write_callback();
+									goto BREAK_PAGELOOP1;
+								}
+
+							}
+						}
+						BREAK_PAGELOOP1:;
+
+						break; // break from case, to not write more.
+					}
 				}
-			}
-			xx++;
-			if(xx > xpage_e)
-			{
-				xx = xpage_s;
-				yy++;
-				if(yy > ypage_e)
-				{
-					png_send_state = 0;
-				}
+
+				
 			}
 		}
 
+		// just relay data from robot, emptying the fifo
+		if(msg_ringbuf_rd != msg_ringbuf_wr) // there is something to relay
+		{
+			lws_write(wsi, latest_msgs[msg_ringbuf_rd], latest_msg_lens[msg_ringbuf_rd], LWS_WRITE_BINARY);
+
+			msg_ringbuf_rd++; if(msg_ringbuf_rd >= MSG_RINGBUF_LEN) msg_ringbuf_rd = 0;
+			if(msg_ringbuf_wr != msg_ringbuf_rd) // there is moar in the fifo - request new write callback
+			{
+				request_write_callback();
+				//			lwsl_notice("sending more, rd=%d wr=%d\n", msg_ringbuf_wr, msg_ringbuf_rd);
+			}
+			else // emptied the FIFO - serve the map pages, if needed.
+			{
+				int startx = pss->view_start_x-1;
+				int starty = pss->view_start_y-1;
+				int endx = pss->view_end_x+1;
+				int endy = pss->view_end_y+1;
+				if(startx < 0) startx = 0; else if(startx > 255) startx = 255;
+				if(starty < 0) starty = 0; else if(starty > 255) starty = 255;
+				if(endx < 0) endx = 0; else if(endx > 255) endx = 255;
+				if(endy < 0) endy = 0; else if(endy > 255) endy = 255;
+
+				// Fetch a page that needs an update
+				for(int yy = starty; yy < endy; yy++)
+				{
+					for(int xx = startx; xx < endx; xx++)
+					{
+						if(pss->map_page_status[yy*256+xx])
+						{
+							pss->do_send_map = 1;
+							pss->view_xx = xx;
+							pss->view_yy = yy;
+							request_write_callback();
+							goto BREAK_PAGELOOP2;
+						}
+
+					}
+				}
+				BREAK_PAGELOOP2:;
+			}
+
+			break; // don't continue sending anything else - remember, one write per writeable callback
+
+		}
+
 	}
-		break;
+	break;
 
 	case LWS_CALLBACK_RECEIVE:
+	{
 		if(len == 17 && ((uint8_t*)in)[0] == 1)
 		{
-			pss->view_start_x = I32FROMBUF((uint8_t*)in, 1);
-			pss->view_start_y = I32FROMBUF((uint8_t*)in, 5);
-			pss->view_end_x = I32FROMBUF((uint8_t*)in, 9);
-			pss->view_end_y = I32FROMBUF((uint8_t*)in, 13);
+			pss->view_start_x = (I32FROMBUF((uint8_t*)in, 1)/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
+			pss->view_start_y = (I32FROMBUF((uint8_t*)in, 5)/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
+			pss->view_end_x = (I32FROMBUF((uint8_t*)in, 9)/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
+			pss->view_end_y = (I32FROMBUF((uint8_t*)in, 13)/MAP_UNIT_W + MAP_MIDDLE_UNIT) / MAP_PAGE_W;
 			lwsl_notice("View update: topleft ( %d , %d )  bottomright ( %d , %d)\n", pss->view_start_x, pss->view_start_y, pss->view_end_x, pss->view_end_y);
 			do_send_png();
 		}
@@ -548,7 +652,18 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		{
 			lwsl_notice("Unrecognized rx from client, len=%d, in[0]=0x%02x\n", (int)len, (len>0) ? (((uint8_t*)in)[0]) : (0));
 		}
-		break;
+
+	}
+	break;
+
+	case LWS_CALLBACK_USER:
+	{
+		for(int i=0; i<256*256; i++)
+		{
+			pss->map_page_status[i] |= updated_pages[i];
+		}
+	}
+	break;
 
 	default:
 		break;
@@ -562,7 +677,7 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		"rn1-protocol", \
 		callback_rn1, \
 		sizeof(struct per_session_data__rn1), \
-		256, /* rx buf size must be >= permessage-deflate rx size */ \
+		256, /* rx buf size */ \
 	}
 
 #if !defined (LWS_PLUGIN_STATIC)

@@ -26,6 +26,9 @@
 </tr>
 </table>
 
+dbg: <div id=dbg>...</div><br>
+
+
 ws_url: <div id=ws_url>...</div><br>
 
 <span id=wsdi_status>Websocket connection uninitialized</span>
@@ -183,25 +186,6 @@ function scroll_view(x, y)
 	draw_world();
 }
 
-var preview_last_x = 0;
-var preview_last_y = 0;
-
-function preview_scroll_view(x, y)
-{
-	var dx = x - preview_last_x;
-	var dy = y - preview_last_y;
-	preview_last_x = x;
-	preview_last_y = y;
-	if(dx != 0 && dy != 0)
-	{
-		ct.clearRect(0, 0, dx, canv_h);
-		ct.clearRect(0, 0, canv_w, dy);
-		var imageData = ct.getImageData(0, 0, canv_w-dx, canv_h-dy);
-		ct.putImageData(imageData, dx, dy);
-	}
-}
-
-
 function handle_click(xpix, ypix)
 {
 	ct.fillStyle = "red";
@@ -281,9 +265,6 @@ $(function()
 {
 	function handleMouseDown(e)
 	{
-		preview_last_x = 0;
-		preview_last_y = 0;
-
 		var rect = canv.getBoundingClientRect();
 		drag_start_x=parseInt(e.clientX-rect.left);
 		view_x_at_drag_start = view_start_x;
@@ -296,6 +277,8 @@ $(function()
 	{
 		if(isDragging)
 		{
+			isDragging=false;
+
 			var rect = canv.getBoundingClientRect();
 			canMouseX=parseInt(e.clientX-rect.left);
 			canMouseY=parseInt(e.clientY-rect.top);
@@ -311,8 +294,6 @@ $(function()
 				scroll_view(drag_x, drag_y);
 			}
 		}
-
-		isDragging=false;
 	}
 
 	function handleMouseOut(e)
@@ -322,16 +303,12 @@ $(function()
 
 	function handleMouseMove(e)
 	{
-		var rect = canv.getBoundingClientRect();
-		canMouseX=parseInt(e.clientX-rect.left);
-		canMouseY=parseInt(e.clientY-rect.top);
-
-		drag_x=canMouseX - drag_start_x;
-		drag_y=canMouseY - drag_start_y;
-
 		if(isDragging)
 		{
-//			preview_scroll_view(drag_x, drag_y);
+			var rect = canv.getBoundingClientRect();
+			drag_x=parseInt(e.clientX-rect.left) - drag_start_x;
+			drag_y=parseInt(e.clientY-rect.top) - drag_start_y;
+
 			view_start_x = view_x_at_drag_start - drag_x*mm_per_pixel;
 			view_start_y = view_y_at_drag_start - drag_y*mm_per_pixel;
 
@@ -391,16 +368,20 @@ function draw_robot(ang, x, y)
 //
 
 var route_len = 0;
-var route;
+var route_start = []; 
+var route = [];
+
+var last_lidar_len = 0;
+var last_lidar;
 
 var robot_shape = [
-	[-500,-200],
-	[ 150,-200],
+	[-500,-240],
+	[ 150,-240],
 	[ 150,-100],
 	[ 250,   0],
 	[ 150, 100],
-	[ 150, 200],
-	[-500, 200]
+	[ 150, 240],
+	[-500, 240]
 ];
 
 function set_robot_size(xs, ys, origin_xoffs, origin_yoffs)
@@ -456,8 +437,9 @@ function draw_world()
 
 	if(route_len > 0)
 	{
+
 		ct.beginPath();
-		ct.moveTo((route[0][0] - view_start_x) / mm_per_pixel, (route[0][1] - view_start_y) / mm_per_pixel);
+		ct.moveTo((route_start[0] - view_start_x) / mm_per_pixel, (route_start[1] - view_start_y) / mm_per_pixel);
 		for(i = 0; i < route_len; i++)
 		{
 			ct.lineWidth = 3;
@@ -466,15 +448,22 @@ function draw_world()
 			else
 				ct.strokeStyle = "#00C030B0";
 
-			ct.lineTo((route[i][0] - view_start_x) / mm_per_pixel, (route[i][0] - view_start_x) / mm_per_pixel);
+			ct.lineTo((route[i][0] - view_start_x) / mm_per_pixel, (route[i][1] - view_start_y) / mm_per_pixel);
 			ct.stroke();
-			if(i < n_elems-1)
+			if(i < route_len-1)
 			{
 				ct.beginPath();
-				ct.moveTo((route[0][0] - view_start_x) / mm_per_pixel, (route[0][1] - view_start_y) / mm_per_pixel);
+				ct.moveTo((route[i][0] - view_start_x) / mm_per_pixel, (route[i][1] - view_start_y) / mm_per_pixel);
 			}
 		}
 	}
+
+	for(i = 0; i < last_lidar_len; i++)
+	{
+		ct.fillStyle = "red";
+		ct.fillRect((last_lidar[i][0]-view_start_x)/ mm_per_pixel -1, (last_lidar[i][1]-view_start_y)/ mm_per_pixel -1, 2, 2);
+	}
+
 }
 
 
@@ -502,6 +491,10 @@ try {
 					case 200:
 					{
 						var image = new Image();
+						image.onload = function()
+						{
+							draw_world();
+						}
 						image.src = URL.createObjectURL(msg.data.slice(10, msg.data.size, "image/png"));
 						var img_x_mm = (new DataView(arrayBuffer).getInt32(1, false));
 						var img_y_mm = (new DataView(arrayBuffer).getInt32(5, false));
@@ -517,6 +510,7 @@ try {
 						cur_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 2 * Math.PI;
 						cur_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
 						cur_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
+						draw_world();
 					}
 					break;
 
@@ -539,8 +533,8 @@ try {
 
 					case 135:
 					{
-						route_len = pay_size/9;
-
+						route_len = (pay_size-8)/9;
+					
 						if(route_len == 0)
 						{
 							document.getElementById("status").textContent = "Sorry, no route found!";
@@ -548,12 +542,20 @@ try {
 						}
 						document.getElementById("status").textContent = "Following route!";
 
+						route_start = new Array(2);
+						route_start[0] = (new DataView(arrayBuffer).getInt32(3, false));
+						route_start[1] = (new DataView(arrayBuffer).getInt32(7, false));
+
+						route = new Array(route_len);
 						for(i = 0; i < route_len; i++)
 						{
-							route[i][2] = (new DataView(arrayBuffer).getUint8(i*9+3));
-							route[i][0] = (new DataView(arrayBuffer).getInt32(i*9+4, false));
-							route[i][1] = (new DataView(arrayBuffer).getInt32(i*9+8, false));
+							route[i] = new Array(3);
+							route[i][2] = (new DataView(arrayBuffer).getUint8(i*9+11));
+							route[i][0] = (new DataView(arrayBuffer).getInt32(i*9+12, false));
+							route[i][1] = (new DataView(arrayBuffer).getInt32(i*9+16, false));
 						}
+
+						draw_world();
 
 					}
 					break;
@@ -562,27 +564,21 @@ try {
 					{
 						if(isDragging) break;
 
+						last_lidar_len = (pay_size-10)/2;
+
 						var lidar_robot_angle = (new DataView(arrayBuffer.slice(3,5)).getInt16(0, false)) / 65536 * 360;
 						var lidar_robot_x = (new DataView(arrayBuffer.slice(5,9)).getInt32(0, false));
 						var lidar_robot_y = (new DataView(arrayBuffer.slice(9,13)).getInt32(0, false));
 
-						for(i = 0; i < 180; i++)
+						last_lidar = new Array(last_lidar_len);
+
+						for(i = 0; i < last_lidar_len; i++)
 						{
 							var x = (new DataView(arrayBuffer.slice(13+2*i+0,13+2*i+1)).getInt8(0, false));
 							var y = (new DataView(arrayBuffer.slice(13+2*i+1,13+2*i+2)).getInt8(0, false));
-							if(x != 0 || y != 0)
-							{
-								x = x*40 + lidar_robot_x;
-								y = y*40 + lidar_robot_y;
-
-								var dot_x = (x - view_start_x) / mm_per_pixel;
-								var dot_y = (y - view_start_y) / mm_per_pixel;
-
-								var c = document.getElementById("map_canvas");
-								var ctx = c.getContext("2d");
-								ctx.fillStyle = "red";
-								ctx.fillRect(dot_x-1,dot_y-1, 2, 2);
-							}
+							last_lidar[i] = new Array(2);
+							last_lidar[i][0] = x*160 + lidar_robot_x;
+							last_lidar[i][1] = y*160 + lidar_robot_y;
 						}
 
 
