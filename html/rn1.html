@@ -15,6 +15,11 @@
 <tr>
 <td style="width:1010px"><canvas id="map_canvas" width="1000" height="800" style="border:1px solid #000000;"></canvas></td>
 <td style="width:200px">
+	<input type=button id=route value="Route there" style="visibility:hidden"><br>
+	<input type=button id=direct_fwd value="Direct forward" style="visibility:hidden"><br>
+	<input type=button id=direct_back value="Direct reverse" style="visibility:hidden"><br>
+	<input type=button id=rotate value="Rotate towards" style="visibility:hidden"><br>
+	<br>
 	<input type=button id=charger value="Go to charger"><br>
 	<input type=button id=estop value="STOP!!!"><br>
 	<input type=button id=redraw value="Redraw"><br>
@@ -90,6 +95,11 @@ document.getElementById('manu_fwd').onclick = manu_fwd;
 document.getElementById('manu_back').onclick = manu_back;
 document.getElementById('manu_left').onclick = manu_left;
 document.getElementById('manu_right').onclick = manu_right;
+
+document.getElementById('route').onclick = do_route;
+document.getElementById('direct_fwd').onclick = do_direct_fwd;
+document.getElementById('direct_back').onclick = do_direct_back;
+document.getElementById('rotate').onclick = do_rotate;
 
 
 document.getElementById('redraw').onclick = redraw;
@@ -174,7 +184,6 @@ function update_view()
 
 	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
 	socket_di.send(view_blob);
-//	ct.clearRect(0, 0, canv_w, canv_h);
 }
 
 function scroll_view(x, y)
@@ -186,22 +195,65 @@ function scroll_view(x, y)
 	draw_world();
 }
 
+var click_active = 0;
+var click_x_mm = 0;
+var click_y_mm = 0;
+
+function activate_click()
+{
+	click_active = 1;
+	document.getElementById("route").style.visibility = "visible";
+	document.getElementById("direct_fwd").style.visibility = "visible";
+	document.getElementById("direct_back").style.visibility = "visible";
+	document.getElementById("rotate").style.visibility = "visible";
+	draw_world();
+}
+
+function deactivate_click()
+{
+	click_active = 0;
+	document.getElementById("route").style.visibility = "hidden";
+	document.getElementById("direct_fwd").style.visibility = "hidden";
+	document.getElementById("direct_back").style.visibility = "hidden";
+	document.getElementById("rotate").style.visibility = "hidden";
+	draw_world();
+}
+
 function handle_click(xpix, ypix)
 {
-	ct.fillStyle = "red";
-	ct.fillRect(xpix-5,ypix-5, 10, 10);
+	click_x_mm = xpix * mm_per_pixel + view_start_x;
+	click_y_mm = ypix * mm_per_pixel + view_start_y;
+	activate_click();
+}
 
-	var x_mm = xpix * mm_per_pixel + view_start_x;
-	var y_mm = ypix * mm_per_pixel + view_start_y;
-
-	var buffer = new ArrayBuffer(9);
+function do_route()
+{
+	var buffer = new ArrayBuffer(10);
 
 	new DataView(buffer).setUint8(0, 2);
-	new DataView(buffer).setInt32(1, x_mm, false);
-	new DataView(buffer).setInt32(5, y_mm, false);
-
+	new DataView(buffer).setInt32(1, click_x_mm, false);
+	new DataView(buffer).setInt32(5, click_y_mm, false);
+	new DataView(buffer).setUint8(9, 0);
 	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
 	socket_di.send(view_blob);
+	deactivate_click();
+}
+
+function do_direct_fwd()  {do_dest(0);}
+function do_direct_back() {do_dest(1);}
+function do_rotate()      {do_dest(8);}
+
+function do_dest(m)
+{
+	var buffer = new ArrayBuffer(10);
+
+	new DataView(buffer).setUint8(0, 7);
+	new DataView(buffer).setInt32(1, click_x_mm, false);
+	new DataView(buffer).setInt32(5, click_y_mm, false);
+	new DataView(buffer).setUint8(9, m);
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+	deactivate_click();
 }
 
 function charger()
@@ -464,6 +516,20 @@ function draw_world()
 		ct.fillRect((last_lidar[i][0]-view_start_x)/ mm_per_pixel -1, (last_lidar[i][1]-view_start_y)/ mm_per_pixel -1, 2, 2);
 	}
 
+	if(click_active)
+	{
+
+		ct.fillStyle = "#FF7090C0";
+		ct.fillRect((click_x_mm-view_start_x)/mm_per_pixel-5,(click_y_mm-view_start_y)/mm_per_pixel-5, 10, 10);
+
+		ct.beginPath();
+		ct.moveTo((cur_x - view_start_x) / mm_per_pixel, (cur_y - view_start_y) / mm_per_pixel);
+		ct.lineWidth = 6;
+		ct.strokeStyle = "#FF709090";
+		ct.lineTo((click_x_mm - view_start_x) / mm_per_pixel, (click_y_mm - view_start_y) / mm_per_pixel);
+		ct.stroke();
+	}
+
 }
 
 
@@ -621,40 +687,12 @@ if (typeof MozWebSocket != "undefined") {
 
 try {
 	socket_status.onopen = function() {
-		document.getElementById("s_status").innerHTML =
-			" <b>websocket connection opened</b><br>" +
-			san(socket_status.extensions);
 	} 
 
 	socket_status.onmessage =function got_packet(msg) {
-		var s;
-		
-		jso = JSON.parse(msg.data);
-		
-		document.getElementById("servinfo").innerHTML = 
-			"<table><tr><td class=l>Build info</td><td>"+
-				san(jso.version) + "</td></tr>" +
-				"<tr><td class=l>Server info</td><td>" +
-				san(jso.hostname) + "</td></tr>" +
-				"</table>";
-		s="<table>";
-		var n;
-		for (n = 0; n < jso.conns.length; n++) {
-			var d = new Date(parseInt(jso.conns[n].time) * 1000);
-			
-			s = s + "<tr><td class=l>client " + (n + 1) +
-			"</td><td><b>" + san(jso.conns[n].peer) +
-			"</b><br>" + san(d.toString()) +
-			"<br>" + san(jso.conns[n].ua) +
-			"</td></tr>";
-		}
-		s = s + "</table>";
-		
-		document.getElementById("conninfo").innerHTML = s;
 	} 
 
 	socket_status.onclose = function(){
-		document.getElementById("s_status").textContent = " websocket connection CLOSED ";
 	}
 } catch(exception) {
 	alert('<p>Error' + exception);  

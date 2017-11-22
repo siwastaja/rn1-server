@@ -321,7 +321,8 @@ static void uv_tcp_write_cb(uv_write_t* req, int status)
 	write_uvbuf.base = NULL;
 }
 
-static void do_route(int32_t x, int32_t y)
+
+static void do_route(int32_t x, int32_t y, uint8_t mode)
 {
 	if(write_uvbuf.base)
 	{
@@ -337,9 +338,30 @@ static void do_route(int32_t x, int32_t y)
 	write_uvbuf.base[2] = (size-3)&0xff;
 	I32TOBUF(x, write_uvbuf.base, 3);
 	I32TOBUF(y, write_uvbuf.base, 7);
-	write_uvbuf.base[11] = 0;
+	write_uvbuf.base[11] = mode;
 	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
 }
+
+static void do_dest(int32_t x, int32_t y, uint8_t mode)
+{
+	if(write_uvbuf.base)
+	{
+		lwsl_notice("Previous TCP write unfinished.\n");
+		return;
+	}
+
+	const int size = 12;
+	write_uvbuf.base = malloc(size);
+	write_uvbuf.len = size;
+	write_uvbuf.base[0] = 55;
+	write_uvbuf.base[1] = ((size-3)&0xff00)>>8;
+	write_uvbuf.base[2] = (size-3)&0xff;
+	I32TOBUF(x, write_uvbuf.base, 3);
+	I32TOBUF(y, write_uvbuf.base, 7);
+	write_uvbuf.base[11] = mode;
+	uv_write(&write_req, common_vhd->stream, &write_uvbuf, 1, uv_tcp_write_cb);
+}
+
 
 static void do_charger()
 {
@@ -621,12 +643,21 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 			lwsl_notice("View update: topleft ( %d , %d )  bottomright ( %d , %d)\n", pss->view_start_x, pss->view_start_y, pss->view_end_x, pss->view_end_y);
 			do_send_png();
 		}
-		else if(len == 9 && ((uint8_t*)in)[0] == 2)
+		else if(len == 10 && ((uint8_t*)in)[0] == 2)
 		{
 			int32_t dest_x = I32FROMBUF((uint8_t*)in, 1);
 			int32_t dest_y = I32FROMBUF((uint8_t*)in, 5);
-			lwsl_notice("ROUTE DEST: %d, %d\n", dest_x, dest_y);
-			do_route(dest_x, dest_y);
+			uint8_t mode = ((uint8_t*)in)[9];
+			lwsl_notice("ROUTE: %d, %d MODE: 0x%02x\n", dest_x, dest_y, mode);
+			do_route(dest_x, dest_y, mode);
+		}
+		else if(len == 10 && ((uint8_t*)in)[0] == 7)
+		{
+			int32_t dest_x = I32FROMBUF((uint8_t*)in, 1);
+			int32_t dest_y = I32FROMBUF((uint8_t*)in, 5);
+			uint8_t mode = ((uint8_t*)in)[9];
+			lwsl_notice("DEST: %d, %d MODE: 0x%02x\n", dest_x, dest_y, mode);
+			do_dest(dest_x, dest_y, mode);
 		}
 		else if(len == 1 && ((uint8_t*)in)[0] == 3)
 		{
