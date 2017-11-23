@@ -1,5 +1,4 @@
-#define _POSIX_C_SOURCE 200809L // getline()
-
+#define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -33,7 +32,8 @@ struct per_vhost_data__rn1 {
 	uv_tcp_t client;
 	uv_connect_t conn;
 	uv_stream_t* stream;
-	uv_timer_t timeout_watcher;
+	uv_timer_t timer_conn_retry;
+	uv_timer_t timer_rx_wdog;
 	struct lws_context *context;
 	struct lws_vhost *vhost;
 	const struct lws_protocols *protocol;
@@ -234,7 +234,7 @@ static void do_connect()
 	lwsl_notice("TCP connection requested...\n");
 }
 
-static void uv_timeout_cb_rn1(uv_timer_t *w)
+static void uv_timer_conn_retry_cb(uv_timer_t *w)
 {
 	do_connect();
 }
@@ -242,8 +242,14 @@ static void uv_timeout_cb_rn1(uv_timer_t *w)
 static void tcphandler_close(uv_handle_t *conn)
 {
 	lwsl_notice("tcphandler_close()\n");
-	uv_timer_start(&common_vhd->timeout_watcher,
-		       uv_timeout_cb_rn1, 30000, 0);
+	uv_timer_start(&common_vhd->timer_conn_retry,
+		       uv_timer_conn_retry_cb, 20000, 0);
+}
+
+static void uv_timer_rx_wdog_cb(uv_timer_t *w)
+{
+	lwsl_notice("No RX from the robot - watchdog ran out - closing TCP connection, retrying later.\n");
+	uv_close((uv_handle_t*)common_vhd->stream, tcphandler_close);
 }
 
 
@@ -251,6 +257,8 @@ void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
 {
 	if(nread >= 0)
 	{
+		uv_timer_start(&common_vhd->timer_rx_wdog, uv_timer_rx_wdog_cb, 20000, 0);
+
 		int uvbufloc = 0;
 
 //		lwsl_notice("Got %d bytes!\n", (int)nread);
@@ -450,6 +458,8 @@ static void tcphandler_established(uv_connect_t *conn, int status)
 			struct per_vhost_data__rn1, conn);
 	vhd->stream = conn->handle;
 	uv_read_start(vhd->stream, alloc_cb, tcphandler_read);
+
+	uv_timer_start(&common_vhd->timer_rx_wdog, uv_timer_rx_wdog_cb, 20000, 0);
 }
 
 static int png_send_state = 0;
@@ -488,8 +498,8 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 			latest_msgs[i] = &internal_latest_msgs[i][LWS_PRE];
 		}
 
-//		uv_timer_init(uv_default_loop(), &vhd->timeout_watcher);
-		uv_timer_init(lws_uv_getloop(vhd->context, 0), &vhd->timeout_watcher);
+		uv_timer_init(lws_uv_getloop(vhd->context, 0), &vhd->timer_conn_retry);
+		uv_timer_init(lws_uv_getloop(vhd->context, 0), &vhd->timer_rx_wdog);
 
 		do_connect();
 		break;
@@ -497,9 +507,10 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 	case LWS_CALLBACK_PROTOCOL_DESTROY:
 		if (!vhd)
 			break;
-	//	lwsl_notice("di: LWS_CALLBACK_PROTOCOL_DESTROY: v=%p, ctx=%p\n", vhd, vhd->context);
-	//	uv_timer_stop(&vhd->timeout_watcher);
-	//	uv_close((uv_handle_t *)&vhd->timeout_watcher, NULL);
+		uv_timer_stop(&vhd->timer_conn_retry);
+		uv_close((uv_handle_t *)&vhd->timer_conn_retry, NULL);
+		uv_timer_stop(&vhd->timer_rx_wdog);
+		uv_close((uv_handle_t *)&vhd->timer_rx_wdog, NULL);
 		break;
 
 	case LWS_CALLBACK_ESTABLISHED:
