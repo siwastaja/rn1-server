@@ -257,7 +257,6 @@ void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
 {
 	if(nread >= 0)
 	{
-		lwsl_notice("Start watchdog\n");
 		uv_timer_start(&common_vhd->timer_rx_wdog, uv_timer_rx_wdog_cb, 20000, 0);
 
 		int uvbufloc = 0;
@@ -460,7 +459,6 @@ static void tcphandler_established(uv_connect_t *conn, int status)
 	vhd->stream = conn->handle;
 	uv_read_start(vhd->stream, alloc_cb, tcphandler_read);
 
-	lwsl_notice("Start watchdog\n");
 	uv_timer_start(&common_vhd->timer_rx_wdog, uv_timer_rx_wdog_cb, 20000, 0);
 }
 
