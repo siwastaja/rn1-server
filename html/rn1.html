@@ -39,23 +39,28 @@ ws_url: <div id=ws_url>...</div><br>
 <span id=wsdi_status>Websocket connection uninitialized</span>
 <br>
 
+<input type=button id=mode2 value="Autonomous mapping, skip compass"> Make the robot decide where to go.
+<br>
+<input type=button id=mode1 value="User control, with localization/mapping"> Normal operation mode. Stops autonomous operations.
+<br>
+<input type=button id=mode5 value="Motors disabled, with localization/mapping"> Lets you move the robot freely
+<br>
+<input type=button id=mode6 value="Motors disabled, NO localization/mapping"> Does not mess up the map if the robot is wrongly localized
+<br>
+<br>
+<br>
 <input type=button id=mode0 value="Mode0: user control, NO localization/mapping"> 
-<br>
-<input type=button id=mode1 value="Mode1: user control, with localization/mapping"> Normal operation mode. Stops autonomous operations.
-<br>
-<input type=button id=mode2 value="Mode2: autonomous mapping, skip compass">
 <br>
 <input type=button id=mode3 value="Mode3: autonomous mapping, start from compass"> Use this to localize the robot on the map. Let it run for a while, until localized.
 <br>
 <input type=button id=mode4 value="Mode4: DaijuMode">
 <br>
-<input type=button id=mode5 value="Mode5: Motors disabled, with localization/mapping"> Lets you move the robot freely
-<br>
-<input type=button id=mode6 value="Mode6: Motors disabled, NO localization/mapping"> Does not mess up the map if the robot is wrongly localized
-<br>
 <input type=button id=mode7 value="Program charger location"> Click this after you have put the robot IN the charger.
 <br>
-
+<br>
+<br>
+<input type=button id=del_maps value="Force map refresh">Refetches all maps from the robot<br>
+<br>
 <input type=button id=restart value="Restart rn1host"> Restarts the robot raspi software<br>
 <input type=button id=update value="Update rn1host from github"> Quits, does a git pull, compiles, and restarts the robot raspi software.<br>
 <input type=button id=quit value="Quit rn1host"> Quits the robot raspi software. You need to manually restart it via ssh, or reboot the robot to get it run again.<br>
@@ -110,6 +115,8 @@ document.getElementById('restart').onclick = rn1host_restart;
 document.getElementById('update').onclick = rn1host_update;
 document.getElementById('quit').onclick = rn1host_quit;
 document.getElementById('reflash').onclick = rn1host_reflash;
+
+document.getElementById('del_maps').onclick = do_del_maps;
 
 /*
  * We display untrusted stuff in html context... reject anything
@@ -403,6 +410,20 @@ if (typeof MozWebSocket != "undefined") {
 }
 
 var world = new Map();
+
+
+function do_del_maps()
+{
+	var buffer = new ArrayBuffer(1);
+
+	new DataView(buffer).setUint8(0, 8);
+	var view_blob = new Blob([buffer], {type: "application/octet-stream"});
+	socket_di.send(view_blob);
+	deactivate_click();
+	world = new Map();
+	draw_world();
+}
+
 
 function draw_robot(ang, x, y)
 {

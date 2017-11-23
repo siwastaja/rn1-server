@@ -63,6 +63,7 @@ static int rsync_running = 0;
 const uint32_t accepted_robot = 0xacdcabba;
 const uint32_t accepted_world = 0;
 
+static int delete_maps_on_next_rsync;
 
 pid_t my_pid;
 static void run_map_rsync()
@@ -75,8 +76,9 @@ static void run_map_rsync()
 
 	if((my_pid = fork()) == 0)
 	{
-		static char *argv[] = {"/bin/bash", SERVER_DIR "/do_map_sync.sh", "proto5", NULL};
-		if((execve(argv[0], (char **)argv , NULL)) == -1)
+		static char *argvdel[] = {"/bin/bash", SERVER_DIR "/do_map_sync.sh", "proto5", "del", NULL};
+		static char *argvnodel[] = {"/bin/bash", SERVER_DIR "/do_map_sync.sh", "proto5", "no", NULL};
+		if((execve(argvnodel[0], delete_maps_on_next_rsync?((char **)argvdel):((char **)argvnodel) , NULL)) == -1)
 		{
 			lwsl_err("run_map_rsync(): execve failed\n");
 		}
@@ -84,6 +86,7 @@ static void run_map_rsync()
 	else
 	{
 		rsync_running = 1;
+		delete_maps_on_next_rsync = 0;
 	}
 }
 
@@ -678,6 +681,12 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 		{
 			lwsl_notice("Restart request\n");
 			ask_restart(((uint8_t*)in)[1]);
+		}
+		else if(len == 1 && ((uint8_t*)in)[0] == 8)
+		{
+			lwsl_notice("Map refetch request\n");
+			delete_maps_on_next_rsync = 1;
+			run_map_rsync();
 		}
 		else
 		{

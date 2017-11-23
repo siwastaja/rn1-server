@@ -5,6 +5,12 @@ SERVER_DIR=/home/hrst/rn1-server
 RETVAL=0
 
 echo "hello from map_sync.sh!"
+if [[ "$2" == "del" ]]
+then
+	echo "Deleting maps first"
+	rm -f ${SERVER_DIR}/*.map ${SERVER_DIR}/*.png
+fi
+
 > ${SERVER_DIR}/synced_maps.txt
 for f in `rsync -zit hrst@${1}:${ROBOT_DIR}/*.map ${SERVER_DIR} | cut -d' ' -f2`
 do
