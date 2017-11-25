@@ -65,6 +65,8 @@ const uint32_t accepted_world = 0;
 
 static int delete_maps_on_next_rsync;
 
+static int already_closing; // UV bug workaround
+
 pid_t my_pid;
 static void run_map_rsync()
 {
@@ -227,6 +229,7 @@ static void tcphandler_established(uv_connect_t *conn, int status);
 
 static void do_connect()
 {
+	already_closing = 0;
 	uv_tcp_init(lws_uv_getloop(common_vhd->context, 0), &common_vhd->client);
 	struct sockaddr_in dest;
 	uv_ip4_addr("192.168.88.118", 22222, &dest);
@@ -249,7 +252,22 @@ static void tcphandler_close(uv_handle_t *conn)
 static void uv_timer_rx_wdog_cb(uv_timer_t *w)
 {
 	lwsl_notice("No RX from the robot - watchdog ran out - closing TCP connection, retrying later.\n");
-	uv_close((uv_handle_t*)common_vhd->stream, tcphandler_close);
+
+	// UV crashes if you try to close a handle that's already either closed or CLOSING. I can find dozens of reports of unreliably software
+	// due to this bug, but I can't find a simple way to check for the handle state - i.e., is it safe to call uv_close? - reliably.
+	// So for now, we just try to avoid race conditions leading to double close, like everyone else.
+	// If you ever read this due to crashing with message: "Assertion failed: ((handle)->flags & UV__HANDLE_CLOSING)", it
+	// means you need to solve the double close problem.
+
+	if(!already_closing)
+	{
+		uv_close((uv_handle_t*)common_vhd->stream, tcphandler_close);
+		already_closing = 1;
+	}
+	else
+	{
+		lwsl_notice("Race condition detected, UV crash prevented.\n");
+	}
 }
 
 
@@ -315,7 +333,17 @@ void tcphandler_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf)
 	else // EOF
 	{
 		lwsl_notice("Got EOF (no connection to robot)!\n");
-		uv_close((uv_handle_t*)tcp, tcphandler_close);
+		if(!already_closing)
+		{
+			uv_timer_stop(&common_vhd->timer_rx_wdog);
+			uv_close((uv_handle_t*)tcp, tcphandler_close);
+			already_closing = 1;
+		}
+		else
+		{
+			lwsl_notice("Race condition detected, UV crash prevented.\n");
+		}
+
 	}
 
 	if(buf->base)
