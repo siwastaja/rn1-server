@@ -68,6 +68,13 @@ static int delete_maps_on_next_rsync;
 static int already_closing; // UV bug workaround
 
 pid_t my_pid;
+
+//#define ROBOT_HOSTNAME "proto5"
+//#define ROBOT_IP "192.168.88.118"
+
+#define ROBOT_HOSTNAME "helsinki1"
+#define ROBOT_IP "192.168.88.162"
+
 static void run_map_rsync()
 {
 	if(rsync_running)
@@ -78,8 +85,8 @@ static void run_map_rsync()
 
 	if((my_pid = fork()) == 0)
 	{
-		static char *argvdel[] = {"/bin/bash", SERVER_DIR "/do_map_sync.sh", "proto5", "del", NULL};
-		static char *argvnodel[] = {"/bin/bash", SERVER_DIR "/do_map_sync.sh", "proto5", "no", NULL};
+		static char *argvdel[] = {"/bin/bash", SERVER_DIR "/do_map_sync.sh", ROBOT_HOSTNAME, "del", NULL};
+		static char *argvnodel[] = {"/bin/bash", SERVER_DIR "/do_map_sync.sh", ROBOT_HOSTNAME, "no", NULL};
 		if((execve(argvnodel[0], delete_maps_on_next_rsync?((char **)argvdel):((char **)argvnodel) , NULL)) == -1)
 		{
 			lwsl_err("run_map_rsync(): execve failed\n");
@@ -234,7 +241,7 @@ static void do_connect()
 	already_closing = 0;
 	uv_tcp_init(lws_uv_getloop(common_vhd->context, 0), &common_vhd->client);
 	struct sockaddr_in dest;
-	uv_ip4_addr("192.168.88.118", 22222, &dest);
+	uv_ip4_addr(ROBOT_IP, 22222, &dest);
 	uv_tcp_connect(&common_vhd->conn, &common_vhd->client, (const struct sockaddr*)&dest, tcphandler_established);
 	lwsl_notice("TCP connection requested...\n");
 }
