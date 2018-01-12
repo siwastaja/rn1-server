@@ -586,6 +586,7 @@ static int callback_rn1(struct lws *wsi, enum lws_callback_reasons reason,
 					I32TOBUF(y, pngdata, 5);
 					pngdata[9] = 1;
 					int len = fread(&pngdata[10], 1, 99982, f_png);
+					fclose(f_png);
 					if(len < 100 || len > 99980)
 					{
 						lwsl_notice("Illegal png file.\n");
