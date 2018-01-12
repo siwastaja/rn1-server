@@ -109,14 +109,14 @@ static void update_map_page_lists()
 	int updates = 0;
 	while(fgets(line, 1998, f))
 	{
-		lwsl_notice("synced_maps: processing line: %s\n", line);
+		//lwsl_notice("synced_maps: processing line: %s\n", line);
 
 		uint32_t robot_id, world_id;
 		unsigned int pagex, pagey;
 
 		if(sscanf(line, "%08x_%u_%u_%u", &robot_id, &world_id, &pagex, &pagey) == 4)
 		{
-			lwsl_notice("--> robot=%08x world=%08x px=%u py=%u\n", robot_id, world_id, pagex, pagey);
+			lwsl_notice("map_sync: robot=%08x world=%08x px=%u py=%u\n", robot_id, world_id, pagex, pagey);
 			if(robot_id == accepted_robot && world_id == accepted_world && pagex < 256 && pagey < 256)
 			{
 				updated_pages[pagey*256+pagex] = 1;
@@ -125,9 +125,11 @@ static void update_map_page_lists()
 		}
 	}
 
+	fclose(f);
+
 	if(updates > 0)
 	{
-		lwsl_notice("--> %u updates: request callbacks.\n", updates);
+		//lwsl_notice("--> %u updates: request callbacks.\n", updates);
 		lws_callback_all_protocol_vhost_args(common_vhd->vhost, common_vhd->protocol, LWS_CALLBACK_USER, NULL, 0);
 	}
 
