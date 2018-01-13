@@ -1,3 +1,27 @@
+/*
+Plugin module for libwebsockets webserver (lwsws)
+
+Use libwebsockets v2.4-stable branch
+
+Install a relatively new libuv (1.x)
+
+Compile libwebsockets with the following settings (for example, modify CMakeLists.txt) modified from the defaults:
+LWS_WITH_ZLIB ON
+LWS_WITH_LIBUV ON
+LWS_WITH_LWSWS ON
+LWS_WITH_PLUGINS ON
+
+
+*/
+
+
+// Put the following definitions to server_conf.h:
+//#define ROBOT_HOSTNAME "proto5"
+//#define ROBOT_IP "192.168.88.118"
+//#define SERVER_DIR "/home/hrst/rn1-server"  // Where the maps are
+
+#include "server_conf.h"
+
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <string.h>
@@ -59,7 +83,6 @@ struct per_session_data__rn1
 
 static int rsync_running = 0;
 
-#define SERVER_DIR "/home/hrst/rn1-server"
 const uint32_t accepted_robot = 0xacdcabba;
 const uint32_t accepted_world = 0;
 
@@ -68,12 +91,6 @@ static int delete_maps_on_next_rsync;
 static int already_closing; // UV bug workaround
 
 pid_t my_pid;
-
-//#define ROBOT_HOSTNAME "proto5"
-//#define ROBOT_IP "192.168.88.118"
-
-#define ROBOT_HOSTNAME "helsinki1"
-#define ROBOT_IP "192.168.88.162"
 
 static void run_map_rsync()
 {

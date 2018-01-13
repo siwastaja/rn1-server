@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <script src="/lws-common.js"></script>
 <script type="text/javascript" src="https://code.jquery.com/jquery.min.js"></script>
-<title>RN1 Webclient</title>
+<title>Pulurobot Webclient Prototype</title>
 </head>
 
 <body>
@@ -41,7 +41,7 @@ ws_url: <div id=ws_url>...</div><br>
 
 <input type=button id=mode2 value="Autonomous mapping, skip compass"> Make the robot decide where to go.
 <br>
-<input type=button id=mode1 value="User control, with localization/mapping"> Normal operation mode. Stops autonomous operations.
+<input type=button id=mode1 value="User control, with localization/mapping"> Normal operation mode. Stops autonomous decisions.
 <br>
 <input type=button id=mode5 value="Motors disabled, with localization/mapping"> Lets you move the robot freely
 <br>
@@ -49,13 +49,15 @@ ws_url: <div id=ws_url>...</div><br>
 <br>
 <br>
 <br>
+<small>
 <input type=button id=mode0 value="Mode0: user control, NO localization/mapping"> 
 <br>
 <input type=button id=mode3 value="Mode3: autonomous mapping, start from compass"> Use this to localize the robot on the map. Let it run for a while, until localized.
 <br>
 <input type=button id=mode4 value="Mode4: DaijuMode">
+</small>
 <br>
-<input type=button id=mode7 value="Program charger location"> Click this after you have put the robot IN the charger.
+<input type=button id=mode7 value="Program charger location"> Click this after you have put the robot IN the charger, do this once, or everytime the charger is moved.
 <br>
 <br>
 <br>
@@ -65,6 +67,8 @@ ws_url: <div id=ws_url>...</div><br>
 <input type=button id=update value="Update rn1host from github"> Quits, does a git pull, compiles, and restarts the robot raspi software.<br>
 <input type=button id=quit value="Quit rn1host"> Quits the robot raspi software. You need to manually restart it via ssh, or reboot the robot to get it run again.<br>
 <input type=button id=reflash value="Update firmware(s)"> Place the firmware file(s) on the robot raspi filesystem, in /home/hrst/rn1-tools/main.bin or motcon.bin, then run this. Reflashes & restarts. Creates a log file at rn1-tools/program_log.txt<br>
+<input type=button id=raspi_reboot value="Reboot the robot computer"> Runs <i>shutdown -r now</i> on the robot Raspi<br>
+<input type=button id=raspi_shdn value="Shutdown the robot computer"> Runs <i>shutdown -h now</i> on the robot Raspi - do this before switching off the power to avoid filesystem corruption<br>
 <br>
 
 
@@ -115,6 +119,8 @@ document.getElementById('restart').onclick = rn1host_restart;
 document.getElementById('update').onclick = rn1host_update;
 document.getElementById('quit').onclick = rn1host_quit;
 document.getElementById('reflash').onclick = rn1host_reflash;
+document.getElementById('raspi_reboot').onclick = rn1host_reboot_raspi;
+document.getElementById('raspi_shdn').onclick = rn1host_shdn_raspi;
 
 document.getElementById('del_maps').onclick = do_del_maps;
 
@@ -275,6 +281,8 @@ function rn1host_restart() {restart_msg(1);}
 function rn1host_quit()    {restart_msg(5);}
 function rn1host_update()  {restart_msg(6);}
 function rn1host_reflash() {restart_msg(10);}
+function rn1host_reboot_raspi() {restart_msg(1235);}
+function rn1host_shdn_raspi()   {restart_msg(1236);}
 
 function restart_msg(m)
 {
