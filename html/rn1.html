@@ -621,8 +621,9 @@ try {
 
 						var volts = (new DataView(arrayBuffer).getUint16(4, false));
 						var percentage = (new DataView(arrayBuffer).getUint8(6));
+						var cha_volts = (new DataView(arrayBuffer).getUint16(7, false));
 
-						document.getElementById("bat_status").textContent = volts/1000 + "V  " + percentage + "%  " + str;
+						document.getElementById("bat_status").textContent = volts/1000 + "V  " + percentage + "% " + str + " charger_in=" cha_volts/1000 + "V";
 					}
 					break;
 
