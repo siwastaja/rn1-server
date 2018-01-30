@@ -1,18 +1,44 @@
 /*
-Plugin module for libwebsockets webserver (lwsws)
+	PULUROBOT RN1-SERVER  Web server and UI prototype
 
-Use libwebsockets v2.4-stable branch
+	(c) 2017-2018 Pulu Robotics and other contributors
+	Maintainer: Antti Alhonen <antti.alhonen@iki.fi>
 
-Install a relatively new libuv (1.x)
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License version 2, as 
+	published by the Free Software Foundation.
 
-Compile libwebsockets with the following settings (for example, modify CMakeLists.txt) modified from the defaults:
-LWS_WITH_ZLIB ON
-LWS_WITH_LIBUV ON
-LWS_WITH_LWSWS ON
-LWS_WITH_PLUGINS ON
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
+	GNU General Public License version 2 is supplied in file LICENSING.
+
+
+
+	NOTE: This program is to be replaced with a proper implementation.
+	Works as a "living use case document", or "proof of concept", or
+	"minimum viable product", whichever you want to call it.
+
+	This is a plugin for libwebsockets webserver (lwsws)
+
+	Use libwebsockets v2.4-stable branch
+
+	Install a relatively new libuv (1.x)
+
+	Compile libwebsockets with the following settings (for example, modify CMakeLists.txt) modified from the defaults:
+	LWS_WITH_ZLIB ON
+	LWS_WITH_LIBUV ON
+	LWS_WITH_LWSWS ON
+	LWS_WITH_PLUGINS ON
+
+	Currently, the JS on the browser does most of the message parsing. This
+	is simply a relay. Currently, one client is supported. Having multiple
+	connected results in weird sharing of messages. This could be easily fixed.
 
 */
+
 
 
 // Put the following definitions to server_conf.h:
